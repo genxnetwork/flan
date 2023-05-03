@@ -13,9 +13,9 @@ class TGDownloader:
     def download(self) -> None:
         vcf_gz_file = self.cache_dir + "/affymetrix.vcf.gz"
 
-        with tqdm(total=100, desc='Downloading file', unit='%') as pbar:
+        with tqdm(total=100, desc='Downloading file', unit='MB') as pbar:
             def reporthook(blocknum, blocksize, totalsize):
-                pbar.update(int(blocknum * blocksize * 100 / totalsize))
+                pbar.update(blocknum * blocksize // 1e+6)
 
             if not os.path.exists(vcf_gz_file):
                 urlretrieve(self.affymetrix_link, vcf_gz_file, reporthook)
