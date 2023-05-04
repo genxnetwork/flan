@@ -1,30 +1,45 @@
-import os
+from ..utils.cache import FileCache
+from ..utils.plink import run_plink
+
 from urllib.request import urlretrieve
 import logging
 from tqdm import tqdm
+from pathlib import Path
 
 
 class TGDownloader:
-    def __init__(self, cache_dir: str) -> None:
+    def __init__(self) -> None:
         self.affymetrix_link = "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/hd_genotype_chip/ALL.wgs.nhgri_coriell_affy_6.20140825.genotypes_has_ped.vcf.gz"
-        os.makedirs(cache_dir, exist_ok=True)        
-        self.cache_dir = cache_dir
+        self.panel_link = "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/hd_genotype_chip/affy_samples.20141118.panel"
+        
+    def _download_file(self, link: str, output_path: Path) -> None:
+        if not output_path.exists():
+            with tqdm(total=100, desc='Downloading file', unit='MB') as pbar:
+                def reporthook(blocknum, blocksize, totalsize):
+                    pbar.update(blocknum * blocksize // 1e+6)
+                urlretrieve(link, output_path, reporthook)
+                logging.info(f'Downloaded {link} to {output_path}')            
+        else:
+            logging.info(f'File {output_path} already exists')
+                
+    def _convert_to_pfile(self, vcf: Path, pfile: Path):
+        run_plink(
+            args_list = ['--make-pgen'],
+            args_dict = {
+                '--vcf': str(vcf),
+                '--out': str(pfile)
+            }
+        )
     
-    def download(self) -> None:
-        vcf_gz_file = self.cache_dir + "/affymetrix.vcf.gz"
-
-        with tqdm(total=100, desc='Downloading file', unit='MB') as pbar:
-            def reporthook(blocknum, blocksize, totalsize):
-                pbar.update(blocknum * blocksize // 1e+6)
-
-            if not os.path.exists(vcf_gz_file):
-                urlretrieve(self.affymetrix_link, vcf_gz_file, reporthook)
-                logging.info(f'Downloaded {self.affymetrix_link} to {vcf_gz_file}')            
-            else:
-                logging.info(f'1000G genotypes file {vcf_gz_file} already exists')
+    def _download(self, cache: FileCache) -> None:
+        vcf, tbi = cache.vcf()
+        
+        self._download_file(self.affymetrix_link, vcf)
+        self._download_file(self.affymetrix_link + '.tbi', tbi)
+        self._download_file(self.panel_link, cache.phenotype_path())
             
-            if not os.path.exists(self.cache_dir + "/affymetrix.vcf.gz.tbi"):
-                urlretrieve(self.affymetrix_link + '.tbi', vcf_gz_file + ".tbi", reporthook)
-                logging.info(f'Downloaded {self.affymetrix_link + ".tbi"} to {vcf_gz_file + ".tbi"}')            
-            
-        return vcf_gz_file
+        return vcf
+    
+    def fit_transform(self, cache: FileCache) -> None:
+        vcf = self._download(cache)
+        self._convert_to_pfile(vcf, cache.pfile_path())
