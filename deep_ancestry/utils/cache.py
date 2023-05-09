@@ -2,6 +2,12 @@ from typing import Tuple
 from pathlib import Path
 
 
+PCA_EXTENSIONS = {
+    'eigenvec': '.eigenvec.allele',
+    'counts': '.acount'
+}
+
+
 class FileCache:
     def __init__(self, root_dir: str = None, num_folds: int = 5) -> None:
         if root_dir is None:
@@ -42,4 +48,12 @@ class FileCache:
             return self.root / 'genotypes' / f'{part}_genotype'
         else:
             return self.root / 'genotypes' / f'fold_{fold_index}' / f'{part}_genotype'
+        
+    def pca_path(self, fold_index: int = None, part: str = None, _type: str = 'eigenvec') -> Path:
+        if fold_index is None and part is None:
+            return self.root / 'genotypes' /  f'genotype{PCA_EXTENSIONS[_type]}' 
+        elif fold_index is None:
+            return self.root / 'genotypes' / f'{part}_genotype{PCA_EXTENSIONS[_type]}'
+        else:
+            return self.root / 'genotypes' / f'fold_{fold_index}' / f'{part}_genotype{PCA_EXTENSIONS[_type]}'
         
