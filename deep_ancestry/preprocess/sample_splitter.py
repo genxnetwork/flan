@@ -31,7 +31,7 @@ class SampleSplitter:
         """
         # we do not need sex here
         ids = pandas.read_table(cache.ids_path()).rename(columns={'#IID': 'IID'}).filter(['FID', 'IID'])
-
+        
         if y is None:
             # regular KFold
             kfsplit = KFold(n_splits=num_folds, shuffle=True, random_state=random_state).split(ids)

@@ -27,8 +27,8 @@ class OptimizerArgs:
 
 @dataclass
 class SchedulerArgs:
-    gamma: float = 0.99
-    epochs_in_round: int = 256
+    gamma: float = 0.9999
+    epochs_in_round: int = 1024
 
 
 @dataclass
@@ -116,6 +116,7 @@ class BaseNet(LightningModule):
         self._add_to_history('raw_loss', avg_raw_loss, step)
         self._add_to_history('reg', avg_reg, step)
         self._add_to_history('lr', self.get_current_lr(), step)
+        self.log('loss', avg_loss, prog_bar=True)
         self.epoch_history.clear()
 
     def on_validation_epoch_end(self) -> None:
@@ -236,6 +237,7 @@ class MLPClassifier(BaseNet):
         self._add_to_history('val_loss', avg_loss, step=self.fl_current_epoch())
         self._add_to_history('val_accuracy', avg_accuracy, step=self.fl_current_epoch())
         self.log('val_loss', avg_loss, prog_bar=True)
+        self.log('val_accuracy', avg_accuracy)
     
     def loader_metrics(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> ClfMetrics:
         loss = self.calculate_loss(y_pred, y_true)

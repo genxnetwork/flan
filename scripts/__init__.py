@@ -17,14 +17,23 @@ from hydra.utils import instantiate
 def global_ancestry():
     print('current working directory is ', os.getcwd())
     hydra.initialize(version_base='1.3', config_path = 'configs')
-    conf = hydra.compose('config.yaml', sys.argv[1:])
+    
+    if len(sys.argv) < 2:
+        raise ValueError(f'Please use one of prepare,fit,predict commands')    
+    cmd = sys.argv[1]
+    conf = hydra.compose('config.yaml', sys.argv[2:])
     args = instantiate(conf)    
     print(args)
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
     ga = GlobalAncestry(args)
-    # ga.prepare()
-    ga.fit()
-    ga.predict()
+    if cmd == 'prepare':
+        ga.prepare()
+    elif cmd == 'fit':
+        ga.fit()
+    elif cmd == 'predict':   
+        ga.predict()
+    else:
+        raise ValueError(f'Please use one of prepare,fit,predict commands')
     
     
 def plink2():

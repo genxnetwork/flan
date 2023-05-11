@@ -4,10 +4,13 @@ import os
 import sys
 from torch.nn.functional import cross_entropy
 import numpy
+import pandas
 from dataclasses import dataclass
 from pytorch_lightning import Trainer
 from tqdm import trange
 import mlflow
+import plotly.express as px
+import plotly.graph_objects as go
 
 from .utils.cache import FileCache, CacheArgs
 from .pca import PCA, PCAArgs
@@ -38,8 +41,6 @@ class GlobalArgs:
     scheduler: SchedulerArgs = SchedulerArgs()
 
 
-        
-
 class GlobalAncestry:
     def __init__(self, args: GlobalArgs) -> None:
         if args.cache.path is None or args.cache.path == '':
@@ -56,23 +57,41 @@ class GlobalAncestry:
         
     def prepare(self) -> None:
 
+        
         print(f'Preparing data for global ancestry inference')
-        self.tg_downloader.fit_transform(self.cache)
+        # self.tg_downloader.fit_transform(self.cache)
         
         print(f'Running variant QC with {self.variant_qc.qc_config} config')
-        self.variant_qc.fit_transform(self.cache)
+        # self.variant_qc.fit_transform(self.cache)
         
         print(f'Running sample QC with {self.sample_qc.qc_config} config')
-        self.sample_qc.fit_transform(self.cache)
+        # self.sample_qc.fit_transform(self.cache)
         
         print(f'Splitting into train, val and test datasets')
-        self.sample_splitter.fit_transform(self.cache)
+        # self.sample_splitter.fit_transform(self.cache)
         
         print(f'Running PCA with {self.pca.args.n_components} components')
-        self.pca.fit(self.cache)
+        # self.pca.fit(self.cache)
 
         self.pca.transform(self.cache)
         print(f'Global ancestry inference data preparation finished')
+        
+    def _plot_target_distribution(self, y: Y, fold: int):
+        values, counts = numpy.unique(y.train, return_counts=True)
+        _, val_counts = numpy.unique(y.val, return_counts=True)
+        _, test_counts = numpy.unique(y.test, return_counts=True)
+        assert len(counts) == len(val_counts)
+        assert len(counts) == len(test_counts)
+        
+        fig = go.Figure(data=[
+            go.Bar(name='Train', x=values, y=counts/counts.sum()),
+            go.Bar(name='Val', x=values, y=val_counts/val_counts.sum()),
+            go.Bar(name='Test', x=values, y=test_counts/test_counts.sum())
+        ])
+        # Change the bar mode
+        fig.update_layout(barmode='group')
+        with open(self.cache.target_plot_path(fold, 'train'), 'wb') as file:
+            file.write(fig.to_image('png'))
     
     def _load_data(self, fold: int) -> Tuple[X, Y]:
         
@@ -80,13 +99,14 @@ class GlobalAncestry:
         
         train_stds, val_stds, test_stds = x.train.std(axis=0), x.val.std(axis=0), x.test.std(axis=0)
         for part, stds in zip(['train', 'val', 'test'], [train_stds, val_stds, test_stds]):
-            logging.info(f'{part} stds: {numpy.array2string(stds, precision=3, floatmode="fixed")}')
+            print(f'{part} stds: {numpy.array2string(stds, precision=3, floatmode="fixed")}')
 
         x.val = x.val * (train_stds / val_stds)
         x.test = x.test * (train_stds / test_stds)
         for part, matrix in zip(['train', 'val', 'test'], [x.train, x.val, x.test]):
-            logging.info(f'{part} normalized stds: {numpy.array2string(matrix.std(axis=0), precision=3, floatmode="fixed")}')
+            print(f'{part} normalized stds: {numpy.array2string(matrix.std(axis=0), precision=3, floatmode="fixed")}')
 
+        self._plot_target_distribution(y, fold)
         return x, y
     
     def _create_model(self, nclass: int, nfeat: int) -> BaseNet:
@@ -114,10 +134,10 @@ class GlobalAncestry:
         for fold in trange(self.cache.num_folds):
             self._start_mlflow_run(fold)
             x, y = self._load_data(fold)
-            num_classes = len(numpy.unique(y))
+            num_classes = len(numpy.unique(y.train))
             data_module = DataModule(x, y, self.args.train.batch_size)
             model = self._create_model(num_classes, x.train.shape[1])
-            trainer = Trainer(max_epochs=self.args.scheduler.epochs_in_round)
+            trainer = Trainer(max_epochs=self.args.scheduler.epochs_in_round, log_every_n_steps=20)
             trainer.fit(model, datamodule=data_module)
             self._eval(trainer, model)  
             mlflow.end_run()      

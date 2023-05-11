@@ -59,7 +59,7 @@ class LocalDataLoader:
         self.logger = logging.getLogger()
 
     def _load_phenotype(self, path: str) -> numpy.ndarray:
-        phenotype = load_phenotype(path, out_type=numpy.float32, encode=True)
+        phenotype = load_phenotype(path, out_type=numpy.int64, encode=True)
         print(f'Phenotype dtype is {phenotype.dtype}')
         if numpy.isnan(phenotype).sum() > 0:
             raise ValueError(f'There are {numpy.isnan(phenotype).sum()} nan values in phenotype from {path}')
