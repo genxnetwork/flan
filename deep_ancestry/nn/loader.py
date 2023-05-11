@@ -4,6 +4,8 @@ import numpy
 import logging
 import pandas 
 
+from ..utils.cache import FileCache
+
 
 @dataclass
 class X:
@@ -33,53 +35,10 @@ def load_phenotype(phenotype_path: str, out_type = numpy.float32, encode = False
     :param encode: whether phenotypes are strings and we want to code them as ints)
     """
     data = pandas.read_table(phenotype_path)
-    data = data.iloc[:, -1].values.astype(out_type)
+    data = data.iloc[:, -1].values
     if encode:
         _, data = numpy.unique(data, return_inverse=True)
-    return data
-
-
-@dataclass
-class DataPath:
-    train: str
-    val: str
-    test: str
-
-
-@dataclass
-class DataLoaderArgs:
-    phenotype: DataPath
-    x: DataPath
-
-
-class LocalDataLoader:
-    def __init__(self, args: DataLoaderArgs) -> None:
-        self.args = DataLoaderArgs
-        self.logger = logging.getLogger()
-
-
-    def _load_phenotype(self, path: str) -> numpy.ndarray:
-        phenotype = load_phenotype(path, encode=True)
-        if numpy.isnan(phenotype).sum() > 0:
-            raise ValueError(f'There are {numpy.isnan(phenotype).sum()} nan values in phenotype from {path}')
-        else:
-            return phenotype
-
-    def load(self) -> Tuple[X, Y]:
-
-        y_train = self._load_phenotype(self.args.phenotype.train)
-        y_val = self._load_phenotype(self.args.phenotype.val)
-        y_test = self._load_phenotype(self.args.phenotype.test)
-        y = Y(y_train, y_val, y_test)
-        
-        x = self._load_pcs()
-        return x, y
-
-    def _load_pcs(self) -> X:
-        X_train = load_plink_pcs(path=self.args.x.train, order_as_in_file=self.args.phenotype.train).values
-        X_val = load_plink_pcs(path=self.args.x.val, order_as_in_file=self.args.phenotype.val).values
-        X_test = load_plink_pcs(path=self.args.x.test, order_as_in_file=self.args.phenotype.test).values
-        return X(X_train, X_val, X_test)
+    return data.astype(out_type)
 
 
 def load_plink_pcs(path, order_as_in_file=None):
@@ -93,3 +52,36 @@ def load_plink_pcs(path, order_as_in_file=None):
         df = df.reindex(y.index)
 
     return df
+
+
+class LocalDataLoader:
+    def __init__(self) -> None:
+        self.logger = logging.getLogger()
+
+    def _load_phenotype(self, path: str) -> numpy.ndarray:
+        phenotype = load_phenotype(path, out_type=numpy.float32, encode=True)
+        print(f'Phenotype dtype is {phenotype.dtype}')
+        if numpy.isnan(phenotype).sum() > 0:
+            raise ValueError(f'There are {numpy.isnan(phenotype).sum()} nan values in phenotype from {path}')
+        else:
+            return phenotype
+
+    def load(self, cache: FileCache, fold: int) -> Tuple[X, Y]:
+
+        y_train = self._load_phenotype(cache.phenotype_path(fold, 'train'))
+        y_val = self._load_phenotype(cache.phenotype_path(fold, 'val'))
+        y_test = self._load_phenotype(cache.phenotype_path(fold, 'test'))
+        y = Y(y_train, y_val, y_test)
+        
+        x = self._load_pcs(cache, fold)
+        return x, y
+
+    def _load_pcs(self, cache: FileCache, fold: int) -> X:
+        X_train = load_plink_pcs(path=cache.pca_path(fold, 'train', 'sscore'), 
+                                 order_as_in_file=cache.phenotype_path(fold, 'train')).values.astype(numpy.float32)
+        X_val = load_plink_pcs(path=cache.pca_path(fold, 'val', 'sscore'), 
+                               order_as_in_file=cache.phenotype_path(fold, 'val')).values.astype(numpy.float32)
+        X_test = load_plink_pcs(path=cache.pca_path(fold, 'test', 'sscore'), 
+                                order_as_in_file=cache.phenotype_path(fold, 'test')).values.astype(numpy.float32)
+        return X(X_train, X_val, X_test)
+

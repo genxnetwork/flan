@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from itertools import product
 import pandas
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
@@ -5,9 +6,14 @@ from ..utils.cache import FileCache
 from ..utils.plink import run_plink
 
 
+@dataclass
+class SplitArgs:
+    pass
+
+
 class SampleSplitter:
-    def __init__(self) -> None:
-        pass
+    def __init__(self, args: SplitArgs) -> None:
+        self.args = args
     
     def _split_ids(self,
                    cache: FileCache,

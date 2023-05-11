@@ -1,14 +1,22 @@
-from ..utils.cache import FileCache
-from ..utils.plink import run_plink
-
+from dataclasses import dataclass
+from typing import Optional
 from urllib.request import urlretrieve
 import logging
 from tqdm import tqdm
 from pathlib import Path
 
+from ..utils.cache import FileCache
+from ..utils.plink import run_plink
+
+
+@dataclass
+class SourceArgs:
+    link: Optional[str] = None
+
 
 class TGDownloader:
-    def __init__(self) -> None:
+    def __init__(self, args: SourceArgs) -> None:
+        self.args = args
         self.affymetrix_link = "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/hd_genotype_chip/ALL.wgs.nhgri_coriell_affy_6.20140825.genotypes_has_ped.vcf.gz"
         self.panel_link = "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/hd_genotype_chip/affy_samples.20141118.panel"
         

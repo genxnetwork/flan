@@ -1,3 +1,3 @@
-from .downloader import TGDownloader
+from .downloader import TGDownloader, SourceArgs
 from .qc import QC
-from .sample_splitter import SampleSplitter
+from .sample_splitter import SampleSplitter, SplitArgs

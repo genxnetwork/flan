@@ -32,6 +32,7 @@ class DataModule(LightningDataModule):
         self, x: X, y: Y, batch_size: int = None, drop_last: bool = True
     ):
         super().__init__()
+        print(f'Train has {x.train.shape[0]} samples, val has {x.val.shape[0]} samples, test has {x.test.shape[0]} samples')
         self.train_dataset = TensorDataset(tensor(x.train), tensor(y.train))
         self.val_dataset = TensorDataset(tensor(x.val), tensor(y.val))
         self.test_dataset = TensorDataset(tensor(x.test), tensor(y.test))

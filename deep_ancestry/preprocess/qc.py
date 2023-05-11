@@ -1,18 +1,14 @@
 from typing import Dict
+from dataclasses import dataclass
+
 from ..utils.plink import run_plink
 from ..utils.cache import FileCache
 
 
-SAMPLE_QC_CONFIG = {
-    '--mind': '0.06',
-    '--king-cutoff': '0.0884' # Cutoff corresponds to second degree relatives
-}
-
-VARIANT_QC_CONFIG = {
-    '--maf': '0.05',
-    '--geno': '0.02',
-    '--hwe': '0.000001 midp keep-fewhet'
-}
+@dataclass
+class QCArgs:
+    sample: Dict[str, str]
+    variant = Dict[str, str]
 
 
 class QC:

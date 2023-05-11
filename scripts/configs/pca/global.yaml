@@ -1,0 +1,2 @@
+_target_: deep_ancestry.pca.PCAArgs
+n_components: 10

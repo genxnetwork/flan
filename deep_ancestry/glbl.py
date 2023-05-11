@@ -1,35 +1,58 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List, Optional
 import logging
 import os
 import sys
-from torch.nn.functional import mse_loss, cross_entropy, binary_cross_entropy
+from torch.nn.functional import cross_entropy
 import numpy
+from dataclasses import dataclass
 from pytorch_lightning import Trainer
+from tqdm import trange
+import mlflow
 
-from .utils.cache import FileCache
-from .pca import PCA
-from .preprocess import QC, TGDownloader, SampleSplitter
-from .preprocess.qc import SAMPLE_QC_CONFIG, VARIANT_QC_CONFIG
-from .nn.models import MLPClassifier, BaseNet
+from .utils.cache import FileCache, CacheArgs
+from .pca import PCA, PCAArgs
+from .preprocess import QC, TGDownloader, SampleSplitter, SplitArgs, SourceArgs
+from .preprocess.qc import QCArgs
+from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule
-from .nn.loader import LocalDataLoader, DataLoaderArgs, DataArgs
+from .nn.loader import LocalDataLoader
 
 
 logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 
 
-class GlobalAncestry:
-    def __init__(self, n_components: int = 10, cache_dir: str = None, sample_qc_config: Dict = None, variant_qc_config: Dict = None) -> None:
-        if cache_dir is None or cache_dir == '':
-            cache_dir = os.path.expanduser('~/.cache/deep_ancestry')
+@dataclass
+class TrainArgs:
+    batch_size: int
+
+@dataclass
+class GlobalArgs:
+    cache: CacheArgs
+    source: SourceArgs
+    qc: QCArgs
+    split: SplitArgs
+    pca: PCAArgs
+    train: TrainArgs
+    model: ModelArgs = ModelArgs()
+    optimizer: OptimizerArgs = OptimizerArgs()
+    scheduler: SchedulerArgs = SchedulerArgs()
+
+
         
-        self.cache = FileCache(cache_dir)
-        self.tg_downloader = TGDownloader()
-        self.variant_qc = QC(sample_qc_config if sample_qc_config is not None else SAMPLE_QC_CONFIG)
-        self.sample_qc = QC(variant_qc_config if variant_qc_config is not None else VARIANT_QC_CONFIG)
-        self.sample_splitter = SampleSplitter()
-        self.pca = PCA(n_components)
-        self.data_loader = LocalDataLoader(DataLoaderArgs(DataArgs('','',''), DataArgs('', '')))
+
+class GlobalAncestry:
+    def __init__(self, args: GlobalArgs) -> None:
+        if args.cache.path is None or args.cache.path == '':
+            args.cache.path = os.path.expanduser('~/.cache/deep_ancestry')
+        
+        self.args = args
+        self.cache = FileCache(args.cache)
+        self.tg_downloader = TGDownloader(args.source)
+        self.variant_qc = QC(args.qc.variant)
+        self.sample_qc = QC(args.qc.sample)
+        self.sample_splitter = SampleSplitter(args.split)
+        self.pca = PCA(args.pca)
+        self.data_loader = LocalDataLoader()
         
     def prepare(self) -> None:
 
@@ -45,44 +68,59 @@ class GlobalAncestry:
         print(f'Splitting into train, val and test datasets')
         self.sample_splitter.fit_transform(self.cache)
         
-        print(f'Running PCA with {self.pca.n_components} components')
+        print(f'Running PCA with {self.pca.args.n_components} components')
         self.pca.fit(self.cache)
 
         self.pca.transform(self.cache)
         print(f'Global ancestry inference data preparation finished')
     
-    def _load_data(self) -> Tuple[X, Y]:
+    def _load_data(self, fold: int) -> Tuple[X, Y]:
         
-        x, y = self.data_loader.load()
+        x, y = self.data_loader.load(self.cache, fold)
         
         train_stds, val_stds, test_stds = x.train.std(axis=0), x.val.std(axis=0), x.test.std(axis=0)
         for part, stds in zip(['train', 'val', 'test'], [train_stds, val_stds, test_stds]):
-            self.logger.info(f'{part} stds: {numpy.array2string(stds, precision=3, floatmode="fixed")}')
+            logging.info(f'{part} stds: {numpy.array2string(stds, precision=3, floatmode="fixed")}')
 
         x.val = x.val * (train_stds / val_stds)
         x.test = x.test * (train_stds / test_stds)
         for part, matrix in zip(['train', 'val', 'test'], [x.train, x.val, x.test]):
-            self.logger.info(f'{part} normalized stds: {numpy.array2string(matrix.std(axis=0), precision=3, floatmode="fixed")}')
+            logging.info(f'{part} normalized stds: {numpy.array2string(matrix.std(axis=0), precision=3, floatmode="fixed")}')
 
         return x, y
     
     def _create_model(self, nclass: int, nfeat: int) -> BaseNet:
         return MLPClassifier(nclass=nclass, nfeat=nfeat,
-                             optim_params=self.cfg.experiment.optimizer,
-                             scheduler_params=self.cfg.experiment.get('scheduler', None),
+                             optim_params=self.args.optimizer,
+                             scheduler_params=self.args.scheduler,
                              loss=cross_entropy)
     
     def _eval(self) -> None:
         pass
     
+    def _start_mlflow_run(self, fold: int):
+        mlflow.set_experiment('global_ancestry')
+        universal_tags = {
+            'model': 'mlp_classifier',
+            'phenotype': 'ancestry',
+        }
+        study_tags = {
+            'fold': fold
+        }
+        self.run = mlflow.start_run(tags=universal_tags | study_tags)
+    
+    
     def fit(self) -> None:
-        x, y = self._load_data()
-        num_classes = len(numpy.unique(y))
-        data_module = DataModule(x, y, self.training_params['batch_size'])
-        model = self._create_model(num_classes, self.n_components)
-        trainer = Trainer(**self.training_params)
-        trainer.fit(model, datamodule=data_module)
-        self._eval(trainer, model)        
+        for fold in trange(self.cache.num_folds):
+            self._start_mlflow_run(fold)
+            x, y = self._load_data(fold)
+            num_classes = len(numpy.unique(y))
+            data_module = DataModule(x, y, self.args.train.batch_size)
+            model = self._create_model(num_classes, x.train.shape[1])
+            trainer = Trainer(max_epochs=self.args.scheduler.epochs_in_round)
+            trainer.fit(model, datamodule=data_module)
+            self._eval(trainer, model)  
+            mlflow.end_run()      
     
     def predict(self) -> None:
         pass

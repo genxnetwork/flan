@@ -1,4 +1,5 @@
 from typing import Dict, Any, List, Tuple, Optional
+from dataclasses import dataclass
 import numpy
 from pytorch_lightning import LightningModule
 import torch
@@ -15,13 +16,37 @@ from .lightning import DataModule
 from .metrics import ModelMetrics, DatasetMetrics, ClfMetrics
 
 
+@dataclass
+class ModelArgs:
+    pass
+
+@dataclass
+class OptimizerArgs:
+    lr: float = 1e-2
+    weight_decay: float = 0.0
+
+@dataclass
+class SchedulerArgs:
+    gamma: float = 0.99
+    epochs_in_round: int = 256
+
+
+@dataclass
+class StepMetrics:
+    loss: float
+    batch_len: int
+    raw_loss: float = 0.0
+    reg: float = 0.0
+    accuracy: float = 0.0
+
+
 class BaseNet(LightningModule):
-    def __init__(self, optim_params: Dict, scheduler_params: Dict) -> None:
+    def __init__(self, optim_params: OptimizerArgs, scheduler_params: SchedulerArgs) -> None:
         """Base class for all NN models, should not be used directly
 
         Args:
-            optim_params (Dict): Parameters of optimizer
-            scheduler_params (Dict): Parameters of learning rate scheduler
+            optim_params (OptimizerArgs): Parameters of optimizer
+            scheduler_params (SchedulerArgs): Parameters of learning rate scheduler
         """
         super().__init__()
         self.optim_params = optim_params
@@ -29,6 +54,7 @@ class BaseNet(LightningModule):
         self.current_round = 1
         self.mlflow_client = MlflowClient()
         self.history: List[Metric] = []
+        self.epoch_history: List[StepMetrics] = []
         self.logged_count = 0
 
     def _add_to_history(self, name: str, value, step: int):
@@ -58,7 +84,9 @@ class BaseNet(LightningModule):
         raw_loss = self.calculate_loss(y_hat, y)
         reg = self.regularization()
         loss = raw_loss + reg
-        return {'loss': loss, 'raw_loss': raw_loss.detach(), 'reg': reg.detach(), 'batch_len': x.shape[0]}
+        
+        self.epoch_history.append(StepMetrics(loss.item(), x.shape[0], raw_loss.detach().item(), reg.detach().item()))
+        return loss
 
     def calculate_loss(self, y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         raise NotImplementedError('subclasses of BaseNet should implement loss calculation')
@@ -70,47 +98,35 @@ class BaseNet(LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = self.calculate_loss(y_hat, y)
-        return {'val_loss': loss, 'batch_len': x.shape[0]}
+        self.epoch_history.append(StepMetrics(loss.item(), x.shape[0]))
+        return loss
 
-    def calculate_avg_epoch_metric(self, outputs: List[Dict[str, Any]], metric_name: str) -> float:
-        total_len = sum(out['batch_len'] for out in outputs)
-        avg_loss = sum(out[metric_name].item()*out['batch_len'] for out in outputs)/total_len
+    def calculate_avg_epoch_metric(self, metric_list: List[Tuple[float, int]]) -> float:
+        total_len = sum(out[1] for out in metric_list)
+        avg_loss = sum(out[0]*out[1] for out in metric_list)/total_len
         return avg_loss if isinstance(avg_loss, float) else avg_loss.item()
 
-    def training_epoch_end(self, outputs: List[Dict[str, Any]]) -> None:
-        avg_loss = self.calculate_avg_epoch_metric(outputs, 'loss')
-        avg_raw_loss = self.calculate_avg_epoch_metric(outputs, 'raw_loss')
-        avg_reg = self.calculate_avg_epoch_metric(outputs, 'reg')
+    def on_train_epoch_end(self) -> None:
+        avg_loss = self.calculate_avg_epoch_metric([(eh.loss, eh.batch_len) for eh in self.epoch_history])
+        avg_raw_loss = self.calculate_avg_epoch_metric([(eh.raw_loss, eh.batch_len) for eh in self.epoch_history])
+        avg_reg = self.calculate_avg_epoch_metric([(eh.reg, eh.batch_len) for eh in self.epoch_history])
 
         step = self.fl_current_epoch()
         self._add_to_history('train_loss', avg_loss, step)
         self._add_to_history('raw_loss', avg_raw_loss, step)
         self._add_to_history('reg', avg_reg, step)
         self._add_to_history('lr', self.get_current_lr(), step)
+        self.epoch_history.clear()
 
-        '''
-        mlflow.log_metrics({
-            'train_loss': avg_loss,
-            'raw_loss': avg_raw_loss,
-            'reg': avg_reg,
-            'lr': self.get_current_lr()
-        }, step=step)
-
-        mlflow.log_metric('train_loss', avg_loss, self.fl_current_epoch())
-        mlflow.log_metric('raw_loss', avg_raw_loss, self.fl_current_epoch())
-        mlflow.log_metric('reg', avg_reg, self.fl_current_epoch())
-        mlflow.log_metric('lr', self.get_current_lr(), self.fl_current_epoch())
-        '''
-        # self.log('train_loss', avg_loss)
-
-    def validation_epoch_end(self, outputs: List[Dict[str, Any]]) -> None:
-        avg_loss = self.calculate_avg_epoch_metric(outputs, 'val_loss')
+    def on_validation_epoch_end(self) -> None:
+        avg_loss = self.calculate_avg_epoch_metric([(eh.loss, eh.batch_len) for eh in self.epoch_history])
         self._add_to_history('val_loss', avg_loss, step=self.fl_current_epoch())
         # mlflow.log_metric('val_loss', avg_loss, self.fl_current_epoch())
         self.log('val_loss', avg_loss, prog_bar=True)
+        self.epoch_history.clear()
 
     def fl_current_epoch(self):
-        return (self.current_round - 1) * self.scheduler_params['epochs_in_round'] + self.current_epoch
+        return (self.current_round - 1) * self.scheduler_params.epochs_in_round + self.current_epoch
 
     def get_current_lr(self):
         if self.trainer is not None:
@@ -120,55 +136,26 @@ class BaseNet(LightningModule):
             return self.optim_params['lr']
         return lr
 
-    def _configure_adamw(self):
-        last_epoch = (self.current_round - 1) * self.scheduler_params['epochs_in_round']
-        optimizer = torch.optim.AdamW([
-            {
-                'params': self.parameters(),
-                'initial_lr': self.optim_params['lr']/self.scheduler_params['div_factor'],
-                'max_lr': self.optim_params['lr'],
-                'min_lr': self.optim_params['lr']/self.scheduler_params['final_div_factor']}
-            ], lr=self.optim_params['lr'], weight_decay=self.optim_params['weight_decay'])
-
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
-                                                        max_lr=self.optim_params['lr'],
-                                                        div_factor=self.scheduler_params['div_factor'],
-                                                        final_div_factor=self.scheduler_params['final_div_factor'],
-                                                        anneal_strategy='linear',
-                                                        epochs=int(self.scheduler_params['rounds']*(1.5*self.scheduler_params['epochs_in_round'])+2),
-                                                        pct_start=0.1,
-                                                        steps_per_epoch=1,
-                                                        last_epoch=last_epoch,
-                                                        cycle_momentum=False)
-
-
-        return [optimizer], [scheduler]
-
     def set_covariate_weights(self, weights: numpy.ndarray):
         raise NotImplementedError('for this model setting covariate weights is not implemented')
 
-
     def _configure_sgd(self):
-        last_epoch = (self.current_round - 1) * self.scheduler_params['epochs_in_round'] if self.scheduler_params is not None else 0
+        last_epoch = (self.current_round - 1) * self.scheduler_params.epochs_in_round if self.scheduler_params is not None else 0
 
         optimizer = torch.optim.SGD([
             {
                 'params': self.parameters(),
-                'lr': self.optim_params['lr']*self.scheduler_params['gamma']**last_epoch if self.scheduler_params is not None else self.optim_params['lr'],
-                'initial_lr': self.optim_params['lr'],
-            }], lr=self.optim_params['lr'], weight_decay=self.optim_params.get('weight_decay', 0))
+                'lr': self.optim_params.lr*self.scheduler_params.gamma**last_epoch if self.scheduler_params is not None else self.optim_params.lr,
+                'initial_lr': self.optim_params.lr,
+            }], lr=self.optim_params.lr, weight_decay=self.optim_params.weight_decay)
 
         schedulers = [torch.optim.lr_scheduler.ExponentialLR(
-            optimizer, gamma=self.scheduler_params['gamma'], last_epoch=last_epoch
+            optimizer, gamma=self.scheduler_params.gamma, last_epoch=last_epoch
         )] if self.scheduler_params is not None else None
         return [optimizer], schedulers
 
     def configure_optimizers(self):
-        optim_init = {
-            'adamw': self._configure_adamw,
-            'sgd': self._configure_sgd
-        }[self.optim_params['name']]
-        return optim_init()
+        return self._configure_sgd()
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: Optional[int] = None) -> Any:
         return self(batch[0])
@@ -190,7 +177,7 @@ class BaseNet(LightningModule):
 
 class MLPClassifier(BaseNet):
     def __init__(self, nclass, nfeat, optim_params, scheduler_params, loss, hidden_size=800, hidden_size2=200, binary=False) -> None:
-        super().__init__(input_size=None, optim_params=optim_params, scheduler_params=scheduler_params)
+        super().__init__(optim_params=optim_params, scheduler_params=scheduler_params)
         # self.bn = BatchNorm1d(nfeat)
         self.nclass = nclass
         self.fc1 = Linear(nfeat, hidden_size)
@@ -223,20 +210,14 @@ class MLPClassifier(BaseNet):
         y_pred = torch.argmax(y_hat, dim=1)
         accuracy = (y_pred == y).float().mean()
 
-        return {
-            'loss': loss,
-            'raw_loss': raw_loss.detach(),
-            'reg': reg.detach(),
-            'batch_len': x.shape[0],
-            'accuracy': accuracy
-        }
+        self.epoch_history.append(StepMetrics(loss.item(), x.shape[0], raw_loss.detach().item(), reg.detach().item(), accuracy.detach().item()))
+        return loss
 
-    def training_epoch_end(self, outputs: List[Dict[str, Any]]) -> None:
-        super(MLPClassifier, self).training_epoch_end(outputs)
-
+    def on_train_epoch_end(self) -> None:
         step = self.fl_current_epoch()
-        avg_accuracy = self.calculate_avg_epoch_metric(outputs, 'accuracy')
+        avg_accuracy = self.calculate_avg_epoch_metric([(eh.accuracy, eh.batch_len) for eh in self.epoch_history])
         self._add_to_history('train_accuracy', avg_accuracy, step)
+        super(MLPClassifier, self).on_train_epoch_end()
 
     def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> Dict[str, Any]:
         x, y = batch
@@ -245,16 +226,17 @@ class MLPClassifier(BaseNet):
 
         y_pred = torch.argmax(y_hat, dim=1)
         accuracy = (y_pred == y).float().mean()
+        self.epoch_history.append(StepMetrics(loss.item(), x.shape[0], accuracy=accuracy.detach().item()))
 
-        return {'val_loss': loss, 'val_accuracy': accuracy, 'batch_len': x.shape[0]}
+        return loss
 
-    def validation_epoch_end(self, outputs: List[Dict[str, Any]]) -> None:
-        avg_loss = self.calculate_avg_epoch_metric(outputs, 'val_loss')
-        avg_accuracy = self.calculate_avg_epoch_metric(outputs, 'val_accuracy')
+    def on_validation_epoch_end(self) -> None:
+        avg_loss = self.calculate_avg_epoch_metric([(eh.loss, eh.batch_len) for eh in self.epoch_history])
+        avg_accuracy = self.calculate_avg_epoch_metric([(eh.accuracy, eh.batch_len) for eh in self.epoch_history])
         self._add_to_history('val_loss', avg_loss, step=self.fl_current_epoch())
         self._add_to_history('val_accuracy', avg_accuracy, step=self.fl_current_epoch())
         self.log('val_loss', avg_loss, prog_bar=True)
-
+    
     def loader_metrics(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> ClfMetrics:
         loss = self.calculate_loss(y_pred, y_true)
         accuracy = Accuracy(num_classes=self.nclass)

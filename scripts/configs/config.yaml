@@ -1,0 +1,9 @@
+_target_: deep_ancestry.GlobalArgs
+defaults:
+  - cache: file
+  - pca: global
+  - qc: tg
+  - source: tg_ftp
+  - split: random
+  - train: global
+  - _self_

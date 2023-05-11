@@ -1,0 +1,2 @@
+_target_: deep_ancestry.TrainArgs
+batch_size: 16

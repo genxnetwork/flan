@@ -1,26 +1,30 @@
 from typing import Tuple
 from pathlib import Path
+from dataclasses import dataclass
 
 
 PCA_EXTENSIONS = {
     'eigenvec': '.eigenvec.allele',
-    'counts': '.acount'
+    'counts': '.acount',
+    'sscore': '.sscore'
 }
+
+@dataclass
+class CacheArgs:
+    path: Path = Path.home() / '.cache' / 'deep_ancestry'
+    num_folds: int = 5
 
 
 class FileCache:
-    def __init__(self, root_dir: str = None, num_folds: int = 5) -> None:
-        if root_dir is None:
-            self.root = Path.home() / '.cache' / 'deep_ancestry'
-        else:
-            self.root = Path(root_dir)
+    def __init__(self, args: CacheArgs) -> None:
+        self.root = Path(args.path)
         self.root.mkdir(parents=True, exist_ok=True)
         for subdir in ['ids', 'phenotypes', 'genotypes']:
             (self.root / subdir).mkdir(exist_ok=True)
-            for fold in range(num_folds):
+            for fold in range(args.num_folds):
                 (self.root / subdir / f'fold_{fold}').mkdir(exist_ok=True)
 
-        self.num_folds = num_folds
+        self.num_folds = args.num_folds
             
     def vcf(self) -> Tuple[Path, Path]:
         return self.root / 'affymetrix.vcf.gz', self.root / 'affymetrix.vcf.gz.tbi'
