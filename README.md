@@ -10,10 +10,10 @@ This Python package provides a robust and efficient solution to predict an indiv
 
 ## Installation
 
-You can install the Ancestry Prediction tool using pip. Make sure that you have Python 3.7 or later installed on your system.
+You can install the Ancestry Prediction tool using poetry. Make sure that you have Python 3.9 or later and poetry installed on your system.
 
 ```
-pip install ancestry_prediction_tool
+poetry add https://github.com/genxnetwork/flan/
 ```
 
 ## Usage
