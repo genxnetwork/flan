@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "deep-ancestry"
+name = "flan"
 version = "0.1.0"
 description = ""
 authors = ["Aleksandr Medvedev <alex@genx.global>"]
 readme = "README.md"
-packages = [{include = "deep_ancestry"}]
+packages = [{include = "flan"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
@@ -27,5 +27,5 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 # my_package_cli = 'my_package.console:run'
-ancestry = "scripts:global_ancestry"
+flan = "scripts:global_ancestry"
 plink2 = "scripts:plink2"

@@ -1,4 +1,4 @@
-# Federated and Centralized Global Ancestry Prediction Tool
+# Federated Learning ANcestry
 
 This Python package provides a robust and efficient solution to predict an individual's genetic ancestry using genomic data. The tool leverages federated learning to train a single model on separate datasets from different nodes.
 
@@ -20,29 +20,29 @@ pip install ancestry_prediction_tool
 
 To fit the model globally, use the following command:
 
-```ancestry global fit```
+```flan global fit```
 
 After fitting the model, you can predict the global ancestry using the following command. Replace `file.vcf.gz` with the path to your own vcf file.
 
-```ancestry global predict --file=file.vcf.gz```
+```flan global predict --file=file.vcf.gz```
 
 To fit the model using the client-server federated architecture, you need to launch server which will perform the aggregation. Server should be accessible from all client nodes. 
 
 Server side:
-```ancestry server fit --server.host=127.0.0.1 --server.port=57632```
+```flan server fit --server.host=127.0.0.1 --server.port=57632```
 
 Then, you should launch clients on each node. 
 
 Client side:
-```ancestry client fit --server.host=127.0.0.1 --server.port=57632```
+```flan client fit --server.host=127.0.0.1 --server.port=57632```
 
 You can then predict the ancestry on the client side using the federated model and the following command:
 
-```ancestry client predict --file=file.vcf.gz```
+```flan client predict --file=file.vcf.gz```
 
 ## Citation
 
-If you use this tool in your research, please cite it as follows:
+If you use `flan` in your research, please cite it as follows:
 
 ```
 TO BE ADDED BY THE PACKAGE AUTHOR
