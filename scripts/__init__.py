@@ -1,5 +1,5 @@
-from deep_ancestry import GlobalAncestry, GlobalArgs
-from deep_ancestry.bin import linux
+from flan import GlobalAncestry, GlobalArgs
+from flan.bin import linux
 import subprocess
 import sys
 import os
