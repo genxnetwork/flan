@@ -21,16 +21,17 @@ def global_ancestry():
     if len(sys.argv) < 2:
         raise ValueError(f'Please use one of prepare,fit,predict commands')    
     cmd = sys.argv[1]
+    print(sys.argv[2:])
     conf = hydra.compose('config.yaml', sys.argv[2:])
-    args = instantiate(conf)    
-    print(args)
+    args = instantiate(conf)
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
     ga = GlobalAncestry(args)
     if cmd == 'prepare':
         ga.prepare()
     elif cmd == 'fit':
         ga.fit()
-    elif cmd == 'predict':   
+    elif cmd == 'predict':
+        ga.prepare_for_prediction()
         ga.predict()
     else:
         raise ValueError(f'Please use one of prepare,fit,predict commands')

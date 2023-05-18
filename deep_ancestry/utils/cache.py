@@ -20,7 +20,7 @@ class FileCache:
     def __init__(self, args: CacheArgs) -> None:
         self.root = Path(args.path)
         self.root.mkdir(parents=True, exist_ok=True)
-        for subdir in ['ids', 'phenotypes', 'genotypes', 'plots']:
+        for subdir in ['ids', 'phenotypes', 'genotypes', 'plots', 'checkpoints']:
             (self.root / subdir).mkdir(exist_ok=True)
             for fold in range(args.num_folds):
                 (self.root / subdir / f'fold_{fold}').mkdir(exist_ok=True)
@@ -81,3 +81,15 @@ class FileCache:
         else:
             return self.root / 'plots' / f'fold_{fold_index}' / f'{part}_target.png'
     
+    
+    def checkpoint_path(self, fold_index: int = None) -> Path:
+        if fold_index is not None:
+            return self.root / 'checkpoints' / f'fold_{fold_index}' 
+        else:
+            return self.root / 'checkpoints'
+    
+    def best_model_path(self, fold_index: int = None) -> Path:
+        if fold_index is None:
+            return self.root / 'checkpoints' / 'best_model.ckpt'
+        else:
+            return self.root / 'checkpoints' / f'fold_{fold_index}' / 'best_model.ckpt'

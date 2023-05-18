@@ -1,0 +1,2 @@
+_target_: deep_ancestry.ReportArgs
+dest_dir: 'output'

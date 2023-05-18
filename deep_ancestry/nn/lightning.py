@@ -27,6 +27,19 @@ class Y:
         return new_y
 
 
+class PredDataModule(LightningDataModule):
+    def __init__(self, x: numpy.ndarray, batch_size: int = None):
+        super().__init__()
+        self.dataset = TensorDataset(tensor(x))
+        self.batch_size = batch_size
+
+    def predict_dataloader(self) -> List[DataLoader]:
+        loader = DataLoader(
+                self.dataset, batch_size=self.batch_size, shuffle=False, num_workers=0, drop_last=False
+        )
+        return [loader]
+
+
 class DataModule(LightningDataModule):
     def __init__(
         self, x: X, y: Y, batch_size: int = None, drop_last: bool = True

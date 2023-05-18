@@ -187,6 +187,7 @@ class MLPClassifier(BaseNet):
         # self.bn3 = BatchNorm1d(hidden_size2)
         self.fc3 = Linear(hidden_size2, nclass)
         self.loss = loss
+        self.save_hyperparameters('nclass', 'nfeat')
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x = self.bn(x)

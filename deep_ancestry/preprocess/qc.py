@@ -8,7 +8,7 @@ from ..utils.cache import FileCache
 @dataclass
 class QCArgs:
     sample: Dict[str, str]
-    variant = Dict[str, str]
+    variant: Dict[str, str]
 
 
 class QC:
@@ -23,4 +23,9 @@ class QC:
                              **self.qc_config})
     
     
-
+    def transform(self, source_path: str, dest_path: str) -> None:
+        run_plink(args_list=['--make-pgen', '--pfile', str(source_path)],
+                  args_dict={**{'--out': str(dest_path),
+                                '--set-missing-var-ids': '@:#'},
+                             **self.qc_config})
+    

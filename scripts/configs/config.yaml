@@ -6,4 +6,5 @@ defaults:
   - source: tg_ftp
   - split: random
   - train: global
+  - predict: file
   - _self_

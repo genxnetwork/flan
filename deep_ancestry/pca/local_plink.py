@@ -42,6 +42,15 @@ class PCA:
                 
                 self.pc_scatterplot(cache, fold, part)
                 
+    def predict(self, cache: FileCache) -> None:
+        run_plink(args_list=['--score', str(cache.pca_path(0, 'train', 'allele')), 
+                            '2', '5', 
+                            'header-read', 'no-mean-imputation', 'variance-standardize'],
+                 args_dict={'--pfile': str(cache.pfile_path(part='pred')),
+                            '--read-freq': str(cache.pca_path(0, 'train', 'counts')),
+                            '--score-col-nums': f'6-{6+self.args.n_components - 1}',
+                            '--out': cache.pfile_path(part='pred')})
+                
                 
     def pc_scatterplot(self, cache: FileCache, fold: int, part: str) -> None:
         """ Visualises eigenvector with scatterplot [matrix] """

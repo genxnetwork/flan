@@ -85,3 +85,11 @@ class LocalDataLoader:
                                 order_as_in_file=cache.phenotype_path(fold, 'test')).values.astype(numpy.float32)
         return X(X_train, X_val, X_test)
 
+    def load_for_prediction(self, cache: FileCache) -> Tuple[numpy.ndarray, numpy.ndarray]:
+        X_pred = load_plink_pcs(path=cache.pca_path(None, 'pred', 'sscore')).values.astype(numpy.float32)
+        # TODO: if fold 0 train dataset does not contain all possible target values, then we are in trouble
+        data = pandas.read_table(cache.phenotype_path(0, 'train'))
+        data = data.iloc[:, -1].values
+        unique, _ = numpy.unique(data, return_inverse=True)
+        return X_pred, unique 
+        

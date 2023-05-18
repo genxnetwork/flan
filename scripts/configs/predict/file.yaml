@@ -1,0 +1,3 @@
+_target_: deep_ancestry.PredArgs
+pfile: test_data/tg
+report_dir: test_data/report
