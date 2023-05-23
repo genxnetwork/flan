@@ -30,6 +30,7 @@ class ClientArgs:
     host: str
     port: int
     
+    
 @dataclass 
 class ServerArgs:
     host: str
@@ -58,7 +59,8 @@ class NodeAncestry:
         
         self.args = args
         self.cache = FileCache(args.cache)
-        self.variant_qc = QC(args.qc.variant)
+        self.local_variant_qc = QC(args.qc.variant)
+        self.federated_variant_qc = FederatedVariantQC()
         self.sample_qc = QC(args.qc.sample)
         self.sample_splitter = SampleSplitter(args.split)
         self.pca = PCA(args.pca)

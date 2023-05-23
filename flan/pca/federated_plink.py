@@ -1,5 +1,6 @@
 import os
-from os.pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path
 import gc
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from flwr.common import FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar
@@ -70,7 +71,7 @@ class FedPCAStrategy(FedAvg):
             components = [ndr[0] for ndr in ndresults]
             ids = [ndr[1] for ndr in ndresults]
             
-            aggregated = numpy.cncatenate(components, axis=0)
+            aggregated = numpy.concatenate(components, axis=0)
             
         elif self.method == 'P-COV':
             components = [ndr[0] for ndr in ndresults]
@@ -106,16 +107,21 @@ class FedPCAServer:
                     config={"num_rounds": 1},
                     force_final_distributed_eval=False
         )
-                
-                
+
+
+@dataclass
+class PCAClientArgs:
+    method: str
+    variants_file: Path
+    freq_file: Path
+    pfile_prefix: str
+    output_prefix: str
+
+
 class FedPCAClient(NumPyClient):
-    def __init__(self, method: str, variants_file: str, freq_path: str, pfile: str, output: str) -> None:
+    def __init__(self, args: PCAClientArgs) -> None:
         super().__init__()
-        self.method = method
-        self.variants_file = variants_file
-        self.freq_path = freq_path
-        self.pfile = pfile
-        self.output = output
+        self.args = args
 
     def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
         self.run_client_pca()
@@ -141,9 +147,9 @@ class FedPCAClient(NumPyClient):
             sscore_file = os.path.join(self.result_folder, node, part % fold + '_projections.csv.eigenvec')
 
             run_plink(args_list=[
-                '--pfile', pfile,
-                '--extract', self.variant_ids_file,
-                '--read-freq', allele_frequencies_file,
+                '--pfile', self.args.pfile_prefix,
+                '--extract', str(self.args.variants_file),
+                '--read-freq', str(self.args.freq_file),
                 '--score', server_allele_file, '2', '5',
                 '--score-col-nums', f'6-{6 + self.n_components - 1}',
                 '--out', sscore_file
@@ -151,18 +157,19 @@ class FedPCAClient(NumPyClient):
 
         return super().evaluate(parameters, config)
 
+
     def run_client_pca(self):
         """
         Performs local PCA with plink
         """
 
-        n_samples = len(pandas.read_csv(self.pfile + '.psam', sep='\t', header=0))
+        n_samples = len(pandas.read_csv(self.args.pfile_prefix + '.psam', sep='\t', header=0))
         run_plink(args_list=[
-            '--pfile', self.pfile,
-            '--extract', self.variants_file,
-            '--read-freq', self.freq_path,
+            '--pfile', self.args.pfile_prefix,
+            '--extract', str(self.args.variants_file),
+            '--read-freq', str(self.args.freq_file),
             '--pca', 'allele-wts', str(n_samples - 1),
-            '--out', self.output,
+            '--out', self.args.output_prefix,
         ])
 
     def load_pstack_component(self) -> Tuple[numpy.ndarray, numpy.ndarray]:
@@ -184,13 +191,13 @@ class FedPCAClient(NumPyClient):
         Read plink results into NumPy arrays.
         """
         
-        evalues = pandas.read_csv(self.output + '.eigenval', sep='\t', header=None)
-        evectors = pandas.read_csv(self.output + '.eigenvec.allele', sep='\t', header=0)
+        evalues = pandas.read_csv(self.args.output_prefix + '.eigenval', sep='\t', header=None)
+        evectors = pandas.read_csv(self.args.output_prefix + '.eigenvec.allele', sep='\t', header=0)
 
         return evectors[evectors.columns[5:]].to_numpy(), evalues[0].to_numpy(), evectors['ID'].to_numpy()
     
 class FedPCANode:
-    def __init__(self, NodeArgs: NodeArgs) -> None:
+    def __init__(self, args: NodeArgs) -> None:
         self.client = FedPCAClient()
         
     def fit_transform(self):

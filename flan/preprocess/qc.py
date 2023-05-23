@@ -28,4 +28,3 @@ class QC:
                   args_dict={**{'--out': str(dest_path),
                                 '--set-missing-var-ids': '@:#'},
                              **self.qc_config})
-    
