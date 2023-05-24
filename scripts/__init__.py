@@ -1,28 +1,37 @@
-from flan import GlobalAncestry, GlobalArgs
+from flan import GlobalAncestry, GlobalArgs, NodeAncestry, NodeAncestryArgs, AncestryServer, ServerAncestryArgs
 from flan.bin import linux
 import subprocess
 import sys
 import os
 import logging
 import hydra
-from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 
 
-# cs = ConfigStore.instance()
-# cs.store(name="config", node=GlobalArgs(None, None, None, None, None, None))
-# cs.store(group="cache", node=CacheArgs)
-
+def flan():
+    if len(sys.argv) < 2:
+        raise ValueError(f'Please use one of global, server, client working modes')
+    
+    mode = sys.argv[1]
+    if mode == 'global':
+        global_ancestry()
+    elif mode == 'server':
+        server_ancestry()
+    elif mode == 'client':  
+        node_ancestry()
+    else:
+        raise ValueError(f'Please use one of global, server, client working modes and not {mode}')
+    
 
 def global_ancestry():
     print('current working directory is ', os.getcwd())
     hydra.initialize(version_base='1.3', config_path = 'configs')
     
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         raise ValueError(f'Please use one of prepare,fit,predict commands')    
-    cmd = sys.argv[1]
-    print(sys.argv[2:])
-    conf = hydra.compose('config.yaml', sys.argv[2:])
+    cmd = sys.argv[2]
+    print(sys.argv[3:])
+    conf = hydra.compose('config.yaml', sys.argv[3:])
     args = instantiate(conf)
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
     ga = GlobalAncestry(args)
@@ -35,6 +44,41 @@ def global_ancestry():
         ga.predict()
     else:
         raise ValueError(f'Please use one of prepare,fit,predict commands')
+    
+    
+def node_ancestry():
+    hydra.initialize(version_base='1.3', config_path = 'configs')
+    
+    if len(sys.argv) < 3:
+        raise ValueError(f'Please use one of prepare,fit,predict commands')    
+    cmd = sys.argv[2]
+    print(sys.argv[3:])
+    conf = hydra.compose('node.yaml', sys.argv[3:])
+    args = instantiate(conf)
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    ga = NodeAncestry(args)
+    if cmd == 'prepare':
+        ga.prepare()
+    else:
+        raise ValueError(f'Please use one of prepare commands')
+    
+    
+def server_ancestry():
+    hydra.initialize(version_base='1.3', config_path = 'configs')
+    
+    if len(sys.argv) < 3:
+        raise ValueError(f'Please use one of prepare,fit,predict commands')    
+    cmd = sys.argv[2]
+    print(sys.argv[3:])
+    
+    conf = hydra.compose('server.yaml', sys.argv[3:])
+    args = instantiate(conf)
+    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    ga = AncestryServer(args)
+    if cmd == 'prepare':
+        ga.prepare()
+    else:
+        raise ValueError(f'Please use one of prepare commands')    
     
     
 def plink2():

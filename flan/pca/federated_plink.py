@@ -97,7 +97,7 @@ class FedPCAServer:
                     server_address=f"[::]:{self.cfg.server.port}",
                     strategy=af_strategy,
                     config={"num_rounds": 1},
-                    force_final_distributed_eval=False
+                    force_final_distributed_eval=True
         )
         
         pca_strategy = FedPCAStrategy(self.method)
@@ -105,7 +105,7 @@ class FedPCAServer:
                     server_address=f"[::]:{self.cfg.server.port}",
                     strategy=pca_strategy,
                     config={"num_rounds": 1},
-                    force_final_distributed_eval=False
+                    force_final_distributed_eval=True
         )
 
 

@@ -2,11 +2,13 @@ from typing import Dict, Tuple, List
 import pandas
 from pathlib import Path
 import numpy
+from time import sleep
 
+from grpc import RpcError
 from flwr.server.strategy import FedAvg
 from flwr.server import start_server
 from flwr.server.client_proxy import ClientProxy
-from flwr.client import NumPyClient
+from flwr.client import NumPyClient, start_numpy_client
 from flwr.common import (
     FitRes,
     NDArrays,
@@ -77,16 +79,43 @@ class FedVariantQCClient(NumPyClient):
                    '--extract': self.variants_file + '.aggregated', 
                    '--out': self.pfile_prefix},
                 **self.qc_config
-            } # Merging dicts here)
+            } # Merging dicts here
+        )
         return 0.0, 0, {}
 
 
 class FedVariantQCServer:
     def __init__(self, server_args: ServerArgs, qc_config: Dict) -> None:
         self.qc_config = qc_config
-        self.server_args = server_args
+        self.args = server_args
         
     def fit_transform(self, cache: FileCache) -> None:
         server = start_server(
-            server_address=self.server_args.server_address,
+            server_address=f'{self.args.host}:{self.args.port}',
+            strategy=FedVariantStrategy(freq_path=cache.freq_path, **self.args.strategy_args),
+            config={"num_rounds": 1},
+            force_final_distributed_eval=True
         )
+        print(server)
+        
+        
+class FedVariantQCNode:
+    def __init__(self, node_args: NodeArgs) -> None:
+        self.args = node_args
+        
+    def fit_transform(self) -> None:
+        for i in range(self.args.connect_iters):
+            try:
+                print(f'starting numpy client with server {self.args.client.server}')
+                start_numpy_client(f'{self.args.client.server}:{self.args.client.port}', self.client)
+                return True
+            except RpcError as re:
+                # probably server has not started yet
+                print(re)
+                sleep(self.args.connect_timeout)
+                continue
+            except Exception as e:
+                print(e)
+                self.logger.error(e)
+                raise e
+        return False  
