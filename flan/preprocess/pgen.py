@@ -13,4 +13,4 @@ class PgenCopy:
         
     def fit_transform(self, cache: FileCache) -> None:
         for ext in ['.pgen', '.psam', '.pvar']:
-            shutil.copy(self.args.link + ext, cache.path)
+            shutil.copy(self.args.link + ext, cache.pfile_path().with_suffix(ext))

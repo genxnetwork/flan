@@ -1,0 +1,2 @@
+path: /home/${oc.env:USER}/.cache/deep_ancestry/node1
+num_folds: 1

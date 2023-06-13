@@ -2,5 +2,9 @@ _target_: flan.NodeAncestryArgs
 defaults:
   - cache: node0
   - qc: tg
+  - source: node0_pgen20
   - fed_qc: tg
+  - node: localhost
   - _self_
+
+name: node0

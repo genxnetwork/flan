@@ -3,6 +3,7 @@ import pandas
 from pathlib import Path
 import numpy
 from time import sleep
+from dataclasses import dataclass
 
 from grpc import RpcError
 from flwr.server.strategy import FedAvg
@@ -77,7 +78,7 @@ class FedVariantQCClient(NumPyClient):
         run_plink(args_list=['--make-pgen'], args_dict={
                 **{'--pfile': self.pfile_prefix, 
                    '--extract': self.variants_file + '.aggregated', 
-                   '--out': self.pfile_prefix},
+                   '--out': self.output_prefix},
                 **self.qc_config
             } # Merging dicts here
         )
@@ -98,24 +99,35 @@ class FedVariantQCServer:
         )
         print(server)
         
+@dataclass  
+class FedVariantQCArgs:
+    variant: Dict[str, str]
+        
         
 class FedVariantQCNode:
-    def __init__(self, node_args: NodeArgs) -> None:
-        self.args = node_args
+    def __init__(self, args: FedVariantQCArgs, node_args: NodeArgs) -> None:
+        self.args = args
+        self.node_args = node_args
         
-    def fit_transform(self) -> None:
-        for i in range(self.args.connect_iters):
+    def fit_transform(self, cache: FileCache) -> None:
+        self.client = FedVariantQCClient(
+            self.args.variant, 
+            str(cache.pfile_path(0, 'train')),
+            str(cache.pfile_path(0, 'train')),
+            str(cache.pfile_path(0, 'train') / '.pvar')
+        )
+        
+        for i in range(self.node_args.connect_iters):
             try:
-                print(f'starting numpy client with server {self.args.client.server}')
-                start_numpy_client(f'{self.args.client.server}:{self.args.client.port}', self.client)
+                print(f'starting numpy client with server {self.node_args.client.server}')
+                start_numpy_client(f'{self.node_args.client.server}:{self.node_args.client.port}', self.client)
                 return True
             except RpcError as re:
                 # probably server has not started yet
                 print(re)
-                sleep(self.args.connect_timeout)
+                sleep(self.node_args.connect_timeout)
                 continue
             except Exception as e:
                 print(e)
-                self.logger.error(e)
                 raise e
         return False  

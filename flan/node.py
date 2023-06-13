@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 
 from .utils.cache import FileCache, CacheArgs
 from .pca import PCA, PCAArgs
-from .preprocess import QC, QCArgs, FedVariantQCNode, TGDownloader, FoldSplitter, SplitArgs, SourceArgs, PgenCopy
+from .preprocess import QC, QCArgs, FedVariantQCNode, TGDownloader, FoldSplitter, SplitArgs, SourceArgs, PgenCopy, FedVariantQCArgs
 from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule
 from .nn.loader import LocalDataLoader
@@ -31,7 +31,8 @@ class NodeAncestryArgs:
     source: SourceArgs
     cache: CacheArgs
     qc: QCArgs
-    fed_qc: NodeArgs
+    fed_qc: FedVariantQCArgs
+    node: NodeArgs
 
 
 class NodeAncestry:
@@ -40,16 +41,19 @@ class NodeAncestry:
             args.cache.path = os.path.expanduser(f'~/.cache/flan/node_{args.name}')
         
         self.args = args
-        args.cache.num_folds = args.split.num_folds
+        args.cache.num_folds = 1
         self.cache = FileCache(args.cache)
         self.source = PgenCopy(args.source)
         self.local_variant_qc = QC(args.qc.variant)
-        self.federated_variant_qc = FedVariantQCNode(args.fed_qc)
+        self.federated_variant_qc = FedVariantQCNode(args.fed_qc, args.node)
         
     def prepare(self) -> None:
-
-        print(f'Running variant QC with {self.variant_qc.qc_config} config')
-        self.variant_qc.fit_transform(self.cache)
+        
+        print(f'Copying pgen input from {self.args.source.link} to {self.cache.pfile_path()}')
+        self.source.fit_transform(self.cache)
+        
+        print(f'Running local variant QC with {self.local_variant_qc.qc_config} config')
+        self.local_variant_qc.fit_transform(self.cache)
         
         print(f'Running federated variant qc with {self.args.fed_qc} args')
         self.federated_variant_qc.fit_transform(self.cache)

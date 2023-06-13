@@ -1,0 +1,3 @@
+client: localhost
+connect_iters: 20
+connect_timeout: 30
