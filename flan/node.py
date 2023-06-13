@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 
 from .utils.cache import FileCache, CacheArgs
 from .pca import PCA, PCAArgs
-from .preprocess import QC, QCArgs, FedVariantQCNode, TGDownloader, FoldSplitter, SplitArgs, SourceArgs
+from .preprocess import QC, QCArgs, FedVariantQCNode, TGDownloader, FoldSplitter, SplitArgs, SourceArgs, PgenCopy
 from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule
 from .nn.loader import LocalDataLoader
@@ -28,6 +28,7 @@ logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 @dataclass
 class NodeAncestryArgs:
     name: str
+    source: SourceArgs
     cache: CacheArgs
     qc: QCArgs
     fed_qc: NodeArgs
@@ -41,6 +42,7 @@ class NodeAncestry:
         self.args = args
         args.cache.num_folds = args.split.num_folds
         self.cache = FileCache(args.cache)
+        self.source = PgenCopy(args.source)
         self.local_variant_qc = QC(args.qc.variant)
         self.federated_variant_qc = FedVariantQCNode(args.fed_qc)
         

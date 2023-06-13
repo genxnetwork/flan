@@ -1,6 +1,6 @@
 _target_: flan.NodeAncestryArgs
 defaults:
-  - cache: file
+  - cache: node0
   - qc: tg
   - fed_qc: tg
   - _self_
