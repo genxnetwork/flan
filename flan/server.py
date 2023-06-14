@@ -14,8 +14,8 @@ class AncestryServer:
     def __init__(self, args: ServerAncestryArgs) -> None:
         self.args = args
         self.cache = FileCache(args.cache)
-        self.variant_qc_server = FedVariantQCServer(args.variant_qc_server) 
+        self.variant_qc_server = FedVariantQCServer(args.fed_qc) 
     
     def prepare(self) -> None:
         print(f'starting to manage data preparation on the server side')
-        self.variant_qc_server.fit_transform()
+        self.variant_qc_server.fit_transform(self.cache)

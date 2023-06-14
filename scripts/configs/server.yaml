@@ -1,4 +1,5 @@
 _target_: flan.ServerAncestryArgs
 defaults:
   - cache: file
+  - fed_qc: server
   - _self_

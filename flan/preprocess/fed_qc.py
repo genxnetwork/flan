@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from grpc import RpcError
 from flwr.server.strategy import FedAvg
-from flwr.server import start_server
+from flwr.server import start_server, ServerConfig
 from flwr.server.client_proxy import ClientProxy
 from flwr.client import NumPyClient, start_numpy_client
 from flwr.common import (
@@ -59,22 +59,25 @@ class FedVariantQCClient(NumPyClient):
         self.output_prefix = output_prefix
         self.variants_file = variants_file
 
-    def get_parameters(self) -> Parameters:
-        pass
-    
     def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
         '''
         Reads local variants file and sends it to server for aggregation
         '''
-        variants = pandas.read_table(self.variants_file)
-        return variants.loc[:, 'ID'].values, len(variants), {}
+        print(f'we are reading variants from {self.variants_file}')
+        print(f'{open(self.variants_file,"r").readlines()[:2]}')
+        
+        variants = pandas.read_table(self.variants_file, comment='#', header=None, names=['CHROM', 'POS', 'ID', 'REF', 'ALT'])
+        ids = variants.loc[:, 'ID'].values.astype(numpy.dtype('U32'))
+        print(f'total bytesize of variant ids array is {ids.nbytes} bytes for {len(ids)} variants')
+        return [variants.loc[:, 'ID'].values.astype(str)], len(variants), {}
     
     def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
         '''
         Gets aggregated SNP ids in <parameters> and extracts them from local genotype file
         '''
-        variants = pandas.DataFrame(values = parameters[0].reshape(-1, 1), columns=['ID'])
+        variants = pandas.DataFrame(data=parameters[0].reshape(-1, 1), columns=['ID'])
         variants.to_csv(self.variants_file + '.aggregated', sep='\t', index=False, header=False)
+        print(f'we wrote total of {len(variants)} variants to {self.variants_file + ".aggregated"}')
         run_plink(args_list=['--make-pgen'], args_dict={
                 **{'--pfile': self.pfile_prefix, 
                    '--extract': self.variants_file + '.aggregated', 
@@ -82,20 +85,22 @@ class FedVariantQCClient(NumPyClient):
                 **self.qc_config
             } # Merging dicts here
         )
-        return 0.0, 0, {}
-
+        return 0.0, len(variants), {}
 
 class FedVariantQCServer:
-    def __init__(self, server_args: ServerArgs, qc_config: Dict) -> None:
-        self.qc_config = qc_config
+    def __init__(self, server_args: ServerArgs) -> None:
         self.args = server_args
         
     def fit_transform(self, cache: FileCache) -> None:
+        config = ServerConfig(num_rounds=1)
         server = start_server(
             server_address=f'{self.args.host}:{self.args.port}',
-            strategy=FedVariantStrategy(freq_path=cache.freq_path, **self.args.strategy_args),
-            config={"num_rounds": 1},
-            force_final_distributed_eval=True
+            strategy=FedVariantStrategy(freq_path=cache.pfile_path().with_suffix('.freq'), **self.args.strategy_args),
+            config=config,
+            # we need it because of the large number of variants, for example 1000G dataset has at least 10M variants
+            # each variant id is at most 128 bytes, so 10M * 128 = 1.28GB
+            grpc_max_message_length=1536*1024*1024, # 1.5GB
+            # force_final_distributed_eval=True
         )
         print(server)
         
@@ -112,15 +117,19 @@ class FedVariantQCNode:
     def fit_transform(self, cache: FileCache) -> None:
         self.client = FedVariantQCClient(
             self.args.variant, 
-            str(cache.pfile_path(0, 'train')),
-            str(cache.pfile_path(0, 'train')),
-            str(cache.pfile_path(0, 'train') / '.pvar')
+            str(cache.pfile_path()),
+            str(cache.pfile_path()),
+            str(cache.pfile_path().with_suffix('.pvar'))
         )
         
         for i in range(self.node_args.connect_iters):
             try:
-                print(f'starting numpy client with server {self.node_args.client.server}')
-                start_numpy_client(f'{self.node_args.client.server}:{self.node_args.client.port}', self.client)
+                print(f'starting numpy client with server {self.node_args.client.host}:{self.node_args.client.port}')
+                start_numpy_client(
+                    server_address=f'{self.node_args.client.host}:{self.node_args.client.port}', 
+                    client=self.client,
+                    grpc_max_message_length=1536*1024*1024, # 1.5GB
+                )
                 return True
             except RpcError as re:
                 # probably server has not started yet
