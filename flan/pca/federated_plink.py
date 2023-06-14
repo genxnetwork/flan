@@ -52,6 +52,29 @@ class AlleleFreqStrategy(FedAvg):
                                   columns=['ALT_CTS', 'OBS_CT'], index=variant_ids)
         result.to_csv(self.freq_path, sep='\t')
         return ndarrays_to_parameters([alt_counts, ref_counts])
+    
+
+class AlleleFreqClient(NumPyClient):
+    """
+    Client for computing allele frequencies
+    """
+    def __init__(self, local_freq_file: str, aggregate_freq_file: str) -> None:
+        self.local_freq_file = local_freq_file
+        self.aggregate_freq_file = aggregate_freq_file
+        
+    def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
+        frequencies = pandas.read_table(self.local_freq_file, index_col=0)
+        variant_ids = frequencies['ID'].values.astype(numpy.dtype('U32'))
+        return ndarrays_to_parameters([frequencies['ALT_CTS'].values, frequencies['OBS_CT'].values, variant_ids]), 1, {}
+    
+    def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
+        assert len(parameters) == 2
+        alt_counts, ref_counts = parameters
+        frequencies = pandas.read_table(self.local_freq_file, index_col=0)
+        variant_ids = frequencies['ID']
+        frequencies = pandas.DataFrame(data={'ALT_CTS': alt_counts, 'OBS_CT': ref_counts}, index=variant_ids)
+        frequencies.to_csv(self.aggregate_freq_file, sep='\t')
+        return 0.0, len(frequencies), {}
         
 
 class FedPCAStrategy(FedAvg):
@@ -143,7 +166,7 @@ class FedPCAClient(NumPyClient):
         )
 
         for part in self.parts:
-            pfile = os.path.join(self.source_folder, node, part % fold)
+            sscore_file = self.cache
             sscore_file = os.path.join(self.result_folder, node, part % fold + '_projections.csv.eigenvec')
 
             run_plink(args_list=[
@@ -156,7 +179,6 @@ class FedPCAClient(NumPyClient):
             ])
 
         return super().evaluate(parameters, config)
-
 
     def run_client_pca(self):
         """
@@ -195,6 +217,7 @@ class FedPCAClient(NumPyClient):
         evectors = pandas.read_csv(self.args.output_prefix + '.eigenvec.allele', sep='\t', header=0)
 
         return evectors[evectors.columns[5:]].to_numpy(), evalues[0].to_numpy(), evectors['ID'].to_numpy()
+    
     
 class FedPCANode:
     def __init__(self, args: NodeArgs) -> None:

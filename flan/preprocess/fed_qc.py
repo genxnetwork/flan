@@ -87,6 +87,7 @@ class FedVariantQCClient(NumPyClient):
         )
         return 0.0, len(variants), {}
 
+
 class FedVariantQCServer:
     def __init__(self, server_args: ServerArgs) -> None:
         self.args = server_args
@@ -103,6 +104,7 @@ class FedVariantQCServer:
             # force_final_distributed_eval=True
         )
         print(server)
+        
         
 @dataclass  
 class FedVariantQCArgs:
