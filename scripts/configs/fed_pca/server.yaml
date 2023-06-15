@@ -1,0 +1,8 @@
+_target_: flan.ServerArgs
+host: localhost
+port: 7501
+strategy: p-stack
+epochs_in_round: 1
+strategy_args: {
+  "n_components": 10
+}

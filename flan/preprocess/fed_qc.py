@@ -21,7 +21,7 @@ from flwr.common import (
 
 from ..utils.plink import run_plink
 from ..utils.cache import FileCache
-from ..fl_engine.utils import ClientArgs, ServerArgs, NodeArgs
+from ..fl_engine.utils import ClientArgs, ServerArgs, NodeArgs, run_node
 
    
 class FedVariantStrategy(FedAvg):
@@ -123,22 +123,4 @@ class FedVariantQCNode:
             str(cache.pfile_path()),
             str(cache.pfile_path().with_suffix('.pvar'))
         )
-        
-        for i in range(self.node_args.connect_iters):
-            try:
-                print(f'starting numpy client with server {self.node_args.client.host}:{self.node_args.client.port}')
-                start_numpy_client(
-                    server_address=f'{self.node_args.client.host}:{self.node_args.client.port}', 
-                    client=self.client,
-                    grpc_max_message_length=1536*1024*1024, # 1.5GB
-                )
-                return True
-            except RpcError as re:
-                # probably server has not started yet
-                print(re)
-                sleep(self.node_args.connect_timeout)
-                continue
-            except Exception as e:
-                print(e)
-                raise e
-        return False  
+        run_node(self.node_args, self.client)

@@ -2,4 +2,7 @@ _target_: flan.ServerAncestryArgs
 defaults:
   - cache: file
   - fed_qc: server
+  - fed_pca: server
   - _self_
+
+start_stage: source

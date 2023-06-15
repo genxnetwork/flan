@@ -20,6 +20,7 @@ from .nn.lightning import X, Y, DataModule
 from .nn.loader import LocalDataLoader
 from .glbl import TrainArgs
 from .fl_engine.utils import NodeArgs
+from .pca.federated_plink import FedPCANode
 
 
 logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
@@ -28,6 +29,7 @@ logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 @dataclass
 class NodeAncestryArgs:
     name: str
+    start_stage: str
     source: SourceArgs
     cache: CacheArgs
     qc: QCArgs
@@ -39,22 +41,36 @@ class NodeAncestry:
     def __init__(self, args: NodeAncestryArgs) -> None:
         if args.cache.path is None or args.cache.path == '':
             args.cache.path = os.path.expanduser(f'~/.cache/flan/node_{args.name}')
-        
+
+        if args.start_stage is None or args.start_stage == '':
+            args.start_stage = 'source'
+            
         self.args = args
         args.cache.num_folds = 1
+        
         self.cache = FileCache(args.cache)
         self.source = PgenCopy(args.source)
         self.local_variant_qc = QC(args.qc.variant)
         self.federated_variant_qc = FedVariantQCNode(args.fed_qc, args.node)
+        self.federated_pca = FedPCANode(args.node)
+        
+        self.stages = [
+            ('source', self.source),
+            ('local_variant_qc', self.local_variant_qc),
+            ('federated_variant_qc', self.federated_variant_qc),
+            ('federated_pca', self.federated_pca)
+        ]
+        
+        if args.start_stage not in [stage for stage, _ in self.stages]:
+            raise ValueError(f'invalid start stage: {args.start_stage}')
+        
+        stage_start_idx = [i for i, (stage, _) in enumerate(self.stages) if stage == args.start_stage][0]
+        self.stages = self.stages[stage_start_idx:]
+
         
     def prepare(self) -> None:
         
-        print(f'Copying pgen input from {self.args.source.link} to {self.cache.pfile_path()}')
-        self.source.fit_transform(self.cache)
-        
-        print(f'Running local variant QC with {self.local_variant_qc.qc_config} config')
-        self.local_variant_qc.fit_transform(self.cache)
-        
-        print(f'Running federated variant qc with {self.args.fed_qc} args')
-        self.federated_variant_qc.fit_transform(self.cache)
-        
+        for stage, node in self.stages:        
+            print(f'running stage {stage} from {self.stages}')
+            node.fit_transform(self.cache)
+            

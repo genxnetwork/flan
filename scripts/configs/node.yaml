@@ -8,3 +8,4 @@ defaults:
   - _self_
 
 name: node0
+start_stage: source

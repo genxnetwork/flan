@@ -10,7 +10,7 @@ import numpy
 import pandas
 import scipy.sparse.linalg as linalg
 from flwr.server.strategy import FedAvg
-from flwr.server import start_server
+from flwr.server import start_server, ServerConfig
 from flwr.client import NumPyClient
 from flwr.common import (
     FitRes,
@@ -22,6 +22,7 @@ from flwr.common import (
 
 from ..utils.plink import run_plink
 from ..utils.cache import FileCache, CacheArgs
+from ..fl_engine.utils import ClientArgs, ServerArgs, NodeArgs, run_node
 
 
 class AlleleFreqStrategy(FedAvg):
@@ -58,11 +59,19 @@ class AlleleFreqClient(NumPyClient):
     """
     Client for computing allele frequencies
     """
-    def __init__(self, local_freq_file: str, aggregate_freq_file: str) -> None:
-        self.local_freq_file = local_freq_file
+    def __init__(self, pfile: str, aggregate_freq_file: str) -> None:
+        self.pfile = pfile
+        self.local_freq_file = self.pfile + '.acount'
         self.aggregate_freq_file = aggregate_freq_file
         
     def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
+        
+        run_plink(args_list=[
+                    '--pfile', self.pfile,
+                    '--freq', 'counts',
+                    '--out', self.pfile
+        ])
+        
         frequencies = pandas.read_table(self.local_freq_file, index_col=0)
         variant_ids = frequencies['ID'].values.astype(numpy.dtype('U32'))
         return ndarrays_to_parameters([frequencies['ALT_CTS'].values, frequencies['OBS_CT'].values, variant_ids]), 1, {}
@@ -108,27 +117,28 @@ class FedPCAStrategy(FedAvg):
         evectors = numpy.flip(evectors, axis=0)
         return ndarrays_to_parameters([evectors])
         
-
+        
 class FedPCAServer:
-    def __init__(self, freq_path: str, method: str):
-        self.freq_path = freq_path
-        self.method = method
+    def __init__(self, args: ServerArgs):
+        self.args = args
     
-    def fit_transform(self):
-        af_strategy = AlleleFreqStrategy(self.freq_path)
+    def fit_transform(self, cache: FileCache):
+        freq_path = cache.pfile_path().with_suffix('.acount')
+        af_strategy = AlleleFreqStrategy(str(freq_path))
+        config = ServerConfig(num_rounds=1)
         start_server(
                     server_address=f"[::]:{self.cfg.server.port}",
                     strategy=af_strategy,
-                    config={"num_rounds": 1},
-                    force_final_distributed_eval=True
+                    config=config,
+                    grpc_max_message_length=1536*1024*1024, # 1.5GB
         )
         
-        pca_strategy = FedPCAStrategy(self.method)
+        pca_strategy = FedPCAStrategy(self.args.strategy)
         start_server(
                     server_address=f"[::]:{self.cfg.server.port}",
                     strategy=pca_strategy,
-                    config={"num_rounds": 1},
-                    force_final_distributed_eval=True
+                    config=config,
+                    grpc_max_message_length=1536*1024*1024, # 1.5GB
         )
 
 
@@ -220,26 +230,19 @@ class FedPCAClient(NumPyClient):
     
     
 class FedPCANode:
-    def __init__(self, args: NodeArgs) -> None:
-        self.client = FedPCAClient()
+    def __init__(self, node_args: NodeArgs) -> None:
+        self.node_args = node_args
         
     def fit_transform(self):
-        for i in range(20):
-            try:
-                print(f'starting numpy client with server {self.client.server}')
-                flwr.client.start_numpy_client(f'{self.client.server}', self.client)
-                return True
-            except RpcError as re:
-                # probably server has not started yet
-                print(re)
-                time.sleep(30)
-                continue
-            except Exception as e:
-                print(e)
-                self.logger.error(e)
-                raise e
-        return False  
-    
+        
+        self.allele_freq_client = AlleleFreqClient()
+        self.fed_pca_client = FedPCAClient()
+        
+        print(f'Running allele frequency client on node')
+        run_node(self.node_args, self.allele_freq_client)
+        print(f'Running federated PCA on node')
+        run_node(self.node_args, self.fed_pca_client)
+        
 
 class FederatedPCASim:
     """
