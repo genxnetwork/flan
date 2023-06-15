@@ -48,11 +48,13 @@ class AlleleFreqStrategy(FedAvg):
         
         alt_counts = sum([freq[0] for freq in frequencies])
         ref_counts = sum([freq[1] for freq in frequencies])
-        variant_ids = frequencies[2][0]
-        result = pandas.DataFrame(numpy.concatenate(alt_counts.reshape(-1, 1), ref_counts.reshape(-1, 1), axis=1), 
+        # taking variant ids from the first client
+        # they should be the same on each client
+        variant_ids = frequencies[0][2]
+        result = pandas.DataFrame(numpy.concatenate([alt_counts.reshape(-1, 1), ref_counts.reshape(-1, 1)], axis=1), 
                                   columns=['ALT_CTS', 'OBS_CT'], index=variant_ids)
         result.to_csv(self.freq_path, sep='\t')
-        return ndarrays_to_parameters([alt_counts, ref_counts])
+        return ndarrays_to_parameters([alt_counts, ref_counts]), {}
     
 
 class AlleleFreqClient(NumPyClient):
@@ -74,7 +76,7 @@ class AlleleFreqClient(NumPyClient):
         
         frequencies = pandas.read_table(self.local_freq_file, index_col=0)
         variant_ids = frequencies['ID'].values.astype(numpy.dtype('U32'))
-        return ndarrays_to_parameters([frequencies['ALT_CTS'].values, frequencies['OBS_CT'].values, variant_ids]), 1, {}
+        return [frequencies['ALT_CTS'].values, frequencies['OBS_CT'].values, variant_ids], 1, {}
     
     def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
         assert len(parameters) == 2
@@ -83,6 +85,7 @@ class AlleleFreqClient(NumPyClient):
         variant_ids = frequencies['ID']
         frequencies = pandas.DataFrame(data={'ALT_CTS': alt_counts, 'OBS_CT': ref_counts}, index=variant_ids)
         frequencies.to_csv(self.aggregate_freq_file, sep='\t')
+        print(f'Wrote aggregated frequencies from server to {self.aggregate_freq_file}')
         return 0.0, len(frequencies), {}
         
 
@@ -127,7 +130,7 @@ class FedPCAServer:
         af_strategy = AlleleFreqStrategy(str(freq_path))
         config = ServerConfig(num_rounds=1)
         start_server(
-                    server_address=f"[::]:{self.cfg.server.port}",
+                    server_address=f"[::]:{self.args.port}",
                     strategy=af_strategy,
                     config=config,
                     grpc_max_message_length=1536*1024*1024, # 1.5GB
@@ -135,7 +138,7 @@ class FedPCAServer:
         
         pca_strategy = FedPCAStrategy(self.args.strategy)
         start_server(
-                    server_address=f"[::]:{self.cfg.server.port}",
+                    server_address=f"[::]:{self.args.port}",
                     strategy=pca_strategy,
                     config=config,
                     grpc_max_message_length=1536*1024*1024, # 1.5GB
@@ -233,13 +236,16 @@ class FedPCANode:
     def __init__(self, node_args: NodeArgs) -> None:
         self.node_args = node_args
         
-    def fit_transform(self):
+    def fit_transform(self, cache: FileCache):
         
-        self.allele_freq_client = AlleleFreqClient()
-        self.fed_pca_client = FedPCAClient()
+        self.allele_freq_client = AlleleFreqClient(str(cache.pfile_path()), 
+                                                   str(cache.pfile_path().with_suffix('.aggregated')))
         
         print(f'Running allele frequency client on node')
         run_node(self.node_args, self.allele_freq_client)
+
+        self.fed_pca_client = FedPCAClient()
+
         print(f'Running federated PCA on node')
         run_node(self.node_args, self.fed_pca_client)
         
