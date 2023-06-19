@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from itertools import product
 import pandas
+import numpy
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from ..utils.cache import FileCache
 from ..utils.plink import run_plink
@@ -28,6 +29,8 @@ class FoldSplitter:
             y: y can be passed to trigger StratifiedKFold instead of KFold
             random_state (int): Fixed random_state for train_test_split sklearn function
         """
+        ids = pandas.read_table(cache.ids_path()).rename(columns={'#IID': 'IID'}).filter(['FID', 'IID'])
+        indices = numpy.arange(ids.shape[0])
         if self.args.num_folds == 1:
             train_indices, val_test_indices = train_test_split(indices,
                                                           train_size=0.8,
@@ -38,13 +41,12 @@ class FoldSplitter:
                                                           random_state=random_state,
                                                           stratify=None if y is None else y.iloc[train_val_indices])
 
-            for indices, part in zip([train_indices, val_indices, test_indices], ['train', 'val', 'test']):
-                out_path = cache.ids_path(fold_index, part)
-                ids.iloc[indices, :].to_csv(out_path, sep='\t', index=False)
+            for part_indices, part in zip([train_indices, val_indices, test_indices], ['train', 'val', 'test']):
+                out_path = cache.ids_path(0, part)
+                ids.iloc[part_indices, :].to_csv(out_path, sep='\t', index=False)
             
             return None
         
-        ids = pandas.read_table(cache.ids_path()).rename(columns={'#IID': 'IID'}).filter(['FID', 'IID'])
         
         if y is None:
             # regular KFold
@@ -91,3 +93,4 @@ class FoldSplitter:
         self._split_ids(cache)
         self._split_genotypes(cache)
         self._split_phenotypes(cache)
+        

@@ -238,16 +238,16 @@ class FedPCANode:
         
     def fit_transform(self, cache: FileCache):
         
-        self.allele_freq_client = AlleleFreqClient(str(cache.pfile_path()), 
-                                                   str(cache.pfile_path().with_suffix('.aggregated')))
+        self.allele_freq_client = AlleleFreqClient(str(cache.pfile_path(0, 'train')), 
+                                                   str(cache.pfile_path(0, 'train').with_suffix('.aggregated')))
         
         print(f'Running allele frequency client on node')
         run_node(self.node_args, self.allele_freq_client)
 
         self.fed_pca_client = FedPCAClient(self.args.method, 
-                                           str(cache.pfile_path().with_suffix('.aggregated')),
-                                           str(cache.pfile_path()),
-                                           str(cache.pfile_path()))
+                                           str(cache.pfile_path(0, 'train').with_suffix('.aggregated')),
+                                           str(cache.pfile_path(0, 'train')),
+                                           str(cache.pfile_path(0, 'train')))
 
         print(f'Running federated PCA on node')
         run_node(self.node_args, self.fed_pca_client)

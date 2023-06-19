@@ -14,7 +14,12 @@ import plotly.graph_objects as go
 
 from .utils.cache import FileCache, CacheArgs
 from .pca import PCA, PCAArgs
-from .preprocess import QC, QCArgs, FedVariantQCNode, TGDownloader, FoldSplitter, SplitArgs, SourceArgs, PgenCopy, FedVariantQCArgs
+from .preprocess import (
+    QC, QCArgs, FedVariantQCNode, 
+    FoldSplitter, SplitArgs, 
+    SourceArgs, PgenCopy, PhenotypeExtractor,
+    FedVariantQCArgs
+)
 from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule
 from .nn.loader import LocalDataLoader
@@ -51,14 +56,18 @@ class NodeAncestry:
         
         self.cache = FileCache(args.cache)
         self.source = PgenCopy(args.source)
+        self.phenotype_extractor = PhenotypeExtractor()
         self.local_variant_qc = QC(args.qc.variant)
         self.federated_variant_qc = FedVariantQCNode(args.fed_qc, args.node)
+        self.local_splitter = FoldSplitter(SplitArgs(num_folds=1))
         self.federated_pca = FedPCANode(args.fed_pca, args.node)
         
         self.stages = [
             ('source', self.source),
+            ('phenotype', self.phenotype_extractor),
             ('local_variant_qc', self.local_variant_qc),
             ('federated_variant_qc', self.federated_variant_qc),
+            ('local_splitter', self.local_splitter),
             ('federated_pca', self.federated_pca)
         ]
         
