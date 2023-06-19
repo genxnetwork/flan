@@ -4,6 +4,7 @@ defaults:
   - qc: tg
   - source: node0_pgen20
   - fed_qc: tg
+  - fed_pca: pstack
   - node: localhost
   - _self_
 

@@ -20,7 +20,7 @@ from .nn.lightning import X, Y, DataModule
 from .nn.loader import LocalDataLoader
 from .glbl import TrainArgs
 from .fl_engine.utils import NodeArgs
-from .pca.federated_plink import FedPCANode
+from .pca.federated_plink import FedPCANode, FedPCAClientArgs
 
 
 logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
@@ -34,6 +34,7 @@ class NodeAncestryArgs:
     cache: CacheArgs
     qc: QCArgs
     fed_qc: FedVariantQCArgs
+    fed_pca: FedPCAClientArgs
     node: NodeArgs
 
 
@@ -52,7 +53,7 @@ class NodeAncestry:
         self.source = PgenCopy(args.source)
         self.local_variant_qc = QC(args.qc.variant)
         self.federated_variant_qc = FedVariantQCNode(args.fed_qc, args.node)
-        self.federated_pca = FedPCANode(args.node)
+        self.federated_pca = FedPCANode(args.fed_pca, args.node)
         
         self.stages = [
             ('source', self.source),
