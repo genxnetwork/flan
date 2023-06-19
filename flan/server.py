@@ -21,7 +21,7 @@ class AncestryServer:
         self.fed_pca_server = FedPCAServer(args.fed_pca)
         
         if args.start_stage is None or args.start_stage == '':
-            args.start_stage = 'federated_variant_qc'
+            args.start_stage = 'variant_qc'
             
         self.stages = [
             ('variant_qc', self.variant_qc_server),

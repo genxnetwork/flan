@@ -5,4 +5,4 @@ defaults:
   - fed_pca: server
   - _self_
 
-start_stage: source
+start_stage: variant_qc

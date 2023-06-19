@@ -110,13 +110,11 @@ class FedPCAStrategy(FedAvg):
                 parameters_to_ndarrays(fit_res.parameters) for _, fit_res in results
             ]
             components = [ndr[0] for ndr in ndresults]
-            ids = [ndr[1] for ndr in ndresults]
             
             aggregated = numpy.concatenate(components, axis=0)
             
         elif self.method == 'pcov':
             components = [ndr[0] for ndr in ndresults]
-            ids = [ndr[1] for ndr in ndresults]
             
             aggregated = sum(components)
             
@@ -168,7 +166,8 @@ class FedPCAClient(NumPyClient):
         self.run_client_pca()
         if self.method == 'pstack':
             components, ids = self.load_pstack_component()
-            return [components, ids], len(ids), {} 
+            print(f'Size of components is {components.nbytes // 1e+6}MB, size of ids is {ids.nbytes // 1e+6}MB')
+            return [components], len(ids), {} 
 
         elif self.method == 'pcov':
             components = self.load_pcov_component()
