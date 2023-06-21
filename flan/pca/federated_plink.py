@@ -118,11 +118,12 @@ class FedPCAStrategy(FedAvg):
             
             aggregated = sum(components)
             
-        _, _, evectors = linalg.svds(aggregated, k=self.n_components)
+        # TODO: make k (number of PCs) a parameter
+        _, _, evectors = linalg.svds(aggregated, k=20)
         
         # Flip eigenvectors since 'linalg.svds' returns them in a reversed order
         evectors = numpy.flip(evectors, axis=0)
-        return ndarrays_to_parameters([evectors])
+        return ndarrays_to_parameters([evectors]), {}
         
         
 class FedPCAServer:
@@ -155,12 +156,10 @@ class FedPCAClientArgs:
 
 
 class FedPCAClient(NumPyClient):
-    def __init__(self, method: str, freq_file: str, pfile: str, output: str) -> None:
+    def __init__(self, method: str, cache: FileCache) -> None:
         super().__init__()
         self.method = method
-        self.freq_file = freq_file
-        self.pfile = pfile
-        self.output = output
+        self.cache = cache
 
     def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
         self.run_client_pca()
@@ -174,21 +173,19 @@ class FedPCAClient(NumPyClient):
             return [components], components.shape[0], {}
         
     def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
-        raise RuntimeError('Not implemented')
-        server_allele_file = os.path.join(
-            self.result_folder, self.ALL, self.train_foldname_template % fold + '.eigenvec.allele'
-        )
-
-        for part in self.parts:
-            sscore_file = self.cache
-            sscore_file = os.path.join(self.result_folder, node, part % fold + '_projections.csv.eigenvec')
+        
+        print(f'FedPCAClient evaluate, parameters len is {len(parameters)} and shape is {parameters[0].shape}')
+        self.create_plink_eigenvec_allele_file(parameters[0])
+        
+        for part in ['train', 'val', 'test']:
 
             run_plink(args_list=[
-                '--pfile', self.pfile,
-                '--read-freq', str(self.freq_file),
-                '--score', server_allele_file, '2', '5',
-                '--score-col-nums', f'6-{6 + self.n_components - 1}',
-                '--out', sscore_file
+                '--pfile', str(self.cache.pfile_path(0, part)),
+                '--read-freq', str(self.cache.pfile_path().with_suffix('.acount')),
+                '--score', str(self.cache.pca_path(0, 'train', 'allele')), '2', '5',
+                # TODO: make number of PCs a parameter
+                '--score-col-nums', f'6-{6 + 20 - 1}',
+                '--out', str(self.cache.pfile_path(0, part))
             ])
 
         return super().evaluate(parameters, config)
@@ -198,12 +195,12 @@ class FedPCAClient(NumPyClient):
         Performs local PCA with plink
         """
 
-        n_samples = len(pandas.read_csv(self.pfile + '.psam', sep='\t', header=0))
+        n_samples = len(pandas.read_csv(self.cache.pfile_path(0, 'train').with_suffix('.psam'), sep='\t', header=0))
         run_plink(args_list=[
-            '--pfile', self.pfile,
-            '--read-freq', str(self.freq_file),
+            '--pfile', self.cache.pfile_path(0, 'train'),
+            '--read-freq', self.cache.pfile_path().with_suffix('.acount'),
             '--pca', 'allele-wts', str(n_samples - 1),
-            '--out', self.output,
+            '--out', self.cache.pfile_path(0, 'train')
         ])
 
     def load_pstack_component(self) -> Tuple[numpy.ndarray, numpy.ndarray]:
@@ -225,10 +222,47 @@ class FedPCAClient(NumPyClient):
         Read plink results into NumPy arrays.
         """
         
-        evalues = pandas.read_csv(self.output + '.eigenval', sep='\t', header=None)
-        evectors = pandas.read_csv(self.output + '.eigenvec.allele', sep='\t', header=0)
+        evalues = pandas.read_csv(self.cache.pca_path(0, 'train', 'eigenval'), sep='\t', header=None)
+        evectors = pandas.read_csv(self.cache.pca_path(0, 'train', 'allele'), sep='\t', header=0)
 
         return evectors[evectors.columns[5:]].to_numpy(), evalues[0].to_numpy(), evectors['ID'].to_numpy(numpy.dtype('U32'))
+    
+    
+    def create_plink_eigenvec_allele_file(self, evectors: numpy.ndarray):
+        # Take the first 5 columns from one of the nodes to mimic combined plink .eigenvec.allele file
+
+        client_allele = pandas.read_csv(self.cache.pca_path(0, 'train', 'allele') , sep='\t', header=0)
+        server_allele = client_allele[client_allele.columns[0:5]]
+
+        for n in range(self.client_allele.shape[1] - 6):
+            '''
+            FIXME: Temporary solution
+
+            Motivation
+            ----------
+
+            Principal components obtained from `svds` are normalized, i.e. have the norm the equals 1.
+            Due to the normalization, resulting projection have small values for sample coordinates
+            in the principal components space. Our classifier cannot learn from such values, since
+            they are too small and we do not have a data normalization step.
+
+            Normalization
+            -------------
+
+            Plink principal components are normalized in a different way. We use one of the client files
+            to compute principal components norm and then renormalize the federated principal components
+            in the same way to mimic plink PCA scale.
+
+            This should be considered as a temporary solution. In the future data normalization may be
+            added into the data loading stage, it can be implemented for our federated case as well.
+            '''
+
+            component_name = f'PC{n + 1}'
+            current_norm = numpy.linalg.norm(evectors[n])
+            plink_norm = numpy.linalg.norm(client_allele.iloc[:, n + 5])
+            server_allele[component_name] = evectors[n] * plink_norm / current_norm
+
+        server_allele.to_csv(self.cache.pca_path(0, 'train', 'allele') + '.aggregated', sep='\t', header=True, index=False)
     
     
 class FedPCANode:
@@ -244,10 +278,7 @@ class FedPCANode:
         print(f'Running allele frequency client on node')
         run_node(self.node_args, self.allele_freq_client)
 
-        self.fed_pca_client = FedPCAClient(self.args.method, 
-                                           str(cache.pfile_path(0, 'train').with_suffix('.aggregated')),
-                                           str(cache.pfile_path(0, 'train')),
-                                           str(cache.pfile_path(0, 'train')))
+        self.fed_pca_client = FedPCAClient(self.args.method, cache)
 
         print(f'Running federated PCA on node')
         run_node(self.node_args, self.fed_pca_client)
