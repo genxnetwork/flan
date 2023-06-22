@@ -181,7 +181,7 @@ class FedPCAClient(NumPyClient):
 
             run_plink(args_list=[
                 '--pfile', str(self.cache.pfile_path(0, part)),
-                '--read-freq', str(self.cache.pfile_path().with_suffix('.acount')),
+                '--read-freq', str(self.cache.pfile_path(0, 'train').with_suffix('.acount')),
                 '--score', str(self.cache.pca_path(0, 'train', 'allele')), '2', '5',
                 # TODO: make number of PCs a parameter
                 '--score-col-nums', f'6-{6 + 20 - 1}',
@@ -198,8 +198,8 @@ class FedPCAClient(NumPyClient):
         n_samples = len(pandas.read_csv(self.cache.pfile_path(0, 'train').with_suffix('.psam'), sep='\t', header=0))
         run_plink(args_list=[
             '--pfile', self.cache.pfile_path(0, 'train'),
-            '--read-freq', self.cache.pfile_path().with_suffix('.acount'),
-            '--pca', 'allele-wts', str(n_samples - 1),
+            '--read-freq', self.cache.pfile_path(0, 'train').with_suffix('.acount'),
+            '--pca', 'allele-wts', str(n_samples-1),
             '--out', self.cache.pfile_path(0, 'train')
         ])
 
@@ -234,7 +234,7 @@ class FedPCAClient(NumPyClient):
         client_allele = pandas.read_csv(self.cache.pca_path(0, 'train', 'allele') , sep='\t', header=0)
         server_allele = client_allele[client_allele.columns[0:5]]
 
-        for n in range(self.client_allele.shape[1] - 6):
+        for n in range(client_allele.shape[1] - 6):
             '''
             FIXME: Temporary solution
 
@@ -260,9 +260,10 @@ class FedPCAClient(NumPyClient):
             component_name = f'PC{n + 1}'
             current_norm = numpy.linalg.norm(evectors[n])
             plink_norm = numpy.linalg.norm(client_allele.iloc[:, n + 5])
-            server_allele[component_name] = evectors[n] * plink_norm / current_norm
+            server_allele.loc[:, component_name] = evectors[n] * plink_norm / current_norm
 
-        server_allele.to_csv(self.cache.pca_path(0, 'train', 'allele') + '.aggregated', sep='\t', header=True, index=False)
+        print(f'Writing aggregated and normalized allele file with {server_allele.columns} cols')
+        server_allele.to_csv(str(self.cache.pca_path(0, 'train', 'allele')) + '.aggregated', sep='\t', header=True, index=False)
     
     
 class FedPCANode:

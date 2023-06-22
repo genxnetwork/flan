@@ -1,2 +1,2 @@
 _target_: flan.utils.cache.CacheArgs
-path: /data2/tg/.cache/deep_ancestry/server
+path: /data/flan/.cache/deep_ancestry/server

@@ -53,8 +53,7 @@ class FedVariantStrategy(FedAvg):
     
 
 class FedVariantQCClient(NumPyClient):
-    def __init__(self, qc_config: Dict, pfile_prefix: str, output_prefix: str, variants_file: str) -> None:
-        self.qc_config = qc_config
+    def __init__(self, pfile_prefix: str, output_prefix: str, variants_file: str) -> None:
         self.pfile_prefix = pfile_prefix
         self.output_prefix = output_prefix
         self.variants_file = variants_file
@@ -81,9 +80,8 @@ class FedVariantQCClient(NumPyClient):
         run_plink(args_list=['--make-pgen'], args_dict={
                 **{'--pfile': self.pfile_prefix, 
                    '--extract': self.variants_file + '.aggregated', 
-                   '--out': self.output_prefix},
-                **self.qc_config
-            } # Merging dicts here
+                   '--out': self.output_prefix}
+            } 
         )
         return 0.0, len(variants), {}
 
@@ -118,7 +116,6 @@ class FedVariantQCNode:
         
     def fit_transform(self, cache: FileCache) -> None:
         self.client = FedVariantQCClient(
-            self.args.variant, 
             str(cache.pfile_path()),
             str(cache.pfile_path()),
             str(cache.pfile_path().with_suffix('.pvar'))

@@ -18,7 +18,8 @@ from .preprocess import (
     QC, QCArgs, FedVariantQCNode, 
     FoldSplitter, SplitArgs, 
     SourceArgs, PgenCopy, PhenotypeExtractor,
-    FedVariantQCArgs
+    FedVariantQCArgs,
+    Pruner, PrunerArgs
 )
 from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule
@@ -38,6 +39,7 @@ class NodeAncestryArgs:
     source: SourceArgs
     cache: CacheArgs
     qc: QCArgs
+    prune: PrunerArgs
     fed_qc: FedVariantQCArgs
     fed_pca: FedPCAClientArgs
     node: NodeArgs
@@ -61,14 +63,15 @@ class NodeAncestry:
         self.federated_variant_qc = FedVariantQCNode(args.fed_qc, args.node)
         self.local_splitter = FoldSplitter(SplitArgs(num_folds=1))
         self.federated_pca = FedPCANode(args.fed_pca, args.node)
-        
+        self.pruner = Pruner(args.prune)
         self.stages = [
             ('source', self.source),
             ('phenotype', self.phenotype_extractor),
             ('local_variant_qc', self.local_variant_qc),
-            ('federated_variant_qc', self.federated_variant_qc),
+            ('pruner', self.pruner),
+            ('variant_qc', self.federated_variant_qc),
             ('local_splitter', self.local_splitter),
-            ('federated_pca', self.federated_pca)
+            ('pca', self.federated_pca)
         ]
         
         if args.start_stage not in [stage for stage, _ in self.stages]:
