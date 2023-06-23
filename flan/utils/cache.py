@@ -7,6 +7,7 @@ PCA_EXTENSIONS = {
     'allele': '.eigenvec.allele',
     'eigenvec': '.eigenvec',
     'counts': '.acount',
+    'eigenval': '.eigenval',
     'sscore': '.sscore'
 }
 

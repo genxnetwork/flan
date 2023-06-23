@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .utils.cache import FileCache, CacheArgs
 from .pca import PCA, PCAArgs
-from .preprocess import QC, TGDownloader, SampleSplitter, SplitArgs, SourceArgs
+from .preprocess import QC, TGDownloader, FoldSplitter, SplitArgs, SourceArgs
 from .preprocess.qc import QCArgs
 from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule, PredDataModule
@@ -63,7 +63,7 @@ class GlobalAncestry:
         self.tg_downloader = TGDownloader(args.source)
         self.variant_qc = QC(args.qc.variant)
         self.sample_qc = QC(args.qc.sample)
-        self.sample_splitter = SampleSplitter(args.split)
+        self.sample_splitter = FoldSplitter(args.split)
         self.pca = PCA(args.pca)
         self.data_loader = LocalDataLoader()
         

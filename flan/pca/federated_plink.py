@@ -1,5 +1,6 @@
 import os
-from os.pathlib import Path
+from dataclasses import dataclass
+from pathlib import Path
 import gc
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from flwr.common import FitRes, MetricsAggregationFn, NDArrays, Parameters, Scalar
@@ -9,7 +10,7 @@ import numpy
 import pandas
 import scipy.sparse.linalg as linalg
 from flwr.server.strategy import FedAvg
-from flwr.server import start_server
+from flwr.server import start_server, ServerConfig
 from flwr.client import NumPyClient
 from flwr.common import (
     FitRes,
@@ -21,6 +22,7 @@ from flwr.common import (
 
 from ..utils.plink import run_plink
 from ..utils.cache import FileCache, CacheArgs
+from ..fl_engine.utils import ClientArgs, ServerArgs, NodeArgs, run_node
 
 
 class AlleleFreqStrategy(FedAvg):
@@ -46,16 +48,53 @@ class AlleleFreqStrategy(FedAvg):
         
         alt_counts = sum([freq[0] for freq in frequencies])
         ref_counts = sum([freq[1] for freq in frequencies])
-        variant_ids = frequencies[2][0]
-        result = pandas.DataFrame(numpy.concatenate(alt_counts.reshape(-1, 1), ref_counts.reshape(-1, 1), axis=1), 
+        # taking variant ids from the first client
+        # they should be the same on each client
+        variant_ids = frequencies[0][2]
+        result = pandas.DataFrame(numpy.concatenate([alt_counts.reshape(-1, 1), ref_counts.reshape(-1, 1)], axis=1), 
                                   columns=['ALT_CTS', 'OBS_CT'], index=variant_ids)
         result.to_csv(self.freq_path, sep='\t')
-        return ndarrays_to_parameters([alt_counts, ref_counts])
+        return ndarrays_to_parameters([alt_counts, ref_counts]), {}
+    
+
+class AlleleFreqClient(NumPyClient):
+    """
+    Client for computing allele frequencies
+    """
+    def __init__(self, pfile: str, aggregate_freq_file: str) -> None:
+        self.pfile = pfile
+        self.local_freq_file = self.pfile + '.acount'
+        self.aggregate_freq_file = aggregate_freq_file
+        
+    def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
+        
+        run_plink(args_list=[
+                    '--pfile', self.pfile,
+                    '--freq', 'counts',
+                    '--out', self.pfile
+        ])
+        
+        frequencies = pandas.read_table(self.local_freq_file, index_col=0)
+        variant_ids = frequencies['ID'].values.astype(numpy.dtype('U32'))
+        return [frequencies['ALT_CTS'].values, frequencies['OBS_CT'].values, variant_ids], 1, {}
+    
+    def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
+        assert len(parameters) == 2
+        alt_counts, ref_counts = parameters
+        frequencies = pandas.read_table(self.local_freq_file, index_col=0)
+        # #CHROM  ID      REF     ALT     ALT_CTS OBS_CT
+        frequencies.loc[:, 'ALT_CTS'] = alt_counts
+        frequencies.loc[:, 'OBS_CT'] = ref_counts
+        frequencies.to_csv(self.aggregate_freq_file, sep='\t')
+        print(f'Wrote aggregated frequencies from server to {self.aggregate_freq_file}')
+        return 0.0, len(frequencies), {}
         
 
 class FedPCAStrategy(FedAvg):
     def __init__(self, method: str, **kwargs) -> None:
         super().__init__(**kwargs)
+        if method not in ['pstack', 'pcov']:
+            raise ValueError(f'Unknown method {method}, should be one of "pstack", "pcov"')
         self.method = method
         
     def aggregate_fit(self, 
@@ -63,90 +102,90 @@ class FedPCAStrategy(FedAvg):
                       results: List[Tuple[ClientProxy, FitRes]], 
                       failures: List[Tuple[ClientProxy, FitRes]]) -> Tuple[Parameters, Dict[str, Scalar]]:
         
-        if self.method == 'P-STACK':
+        if not self.accept_failures and failures:
+            return None, {}
+        
+        if self.method == 'pstack':
             ndresults = [
                 parameters_to_ndarrays(fit_res.parameters) for _, fit_res in results
             ]
             components = [ndr[0] for ndr in ndresults]
-            ids = [ndr[1] for ndr in ndresults]
             
-            aggregated = numpy.cncatenate(components, axis=0)
+            aggregated = numpy.concatenate(components, axis=0)
             
-        elif self.method == 'P-COV':
+        elif self.method == 'pcov':
             components = [ndr[0] for ndr in ndresults]
-            ids = [ndr[1] for ndr in ndresults]
             
             aggregated = sum(components)
             
-        _, _, evectors = linalg.svds(aggregated, k=self.n_components)
+        # TODO: make k (number of PCs) a parameter
+        _, _, evectors = linalg.svds(aggregated, k=20)
         
         # Flip eigenvectors since 'linalg.svds' returns them in a reversed order
         evectors = numpy.flip(evectors, axis=0)
-        return ndarrays_to_parameters([evectors])
+        return ndarrays_to_parameters([evectors]), {}
         
-
+        
 class FedPCAServer:
-    def __init__(self, freq_path: str, method: str):
-        self.freq_path = freq_path
-        self.method = method
+    def __init__(self, args: ServerArgs):
+        self.args = args
     
-    def fit_transform(self):
-        af_strategy = AlleleFreqStrategy(self.freq_path)
+    def fit_transform(self, cache: FileCache):
+        freq_path = cache.pfile_path().with_suffix('.acount')
+        af_strategy = AlleleFreqStrategy(str(freq_path))
+        config = ServerConfig(num_rounds=1)
         start_server(
-                    server_address=f"[::]:{self.cfg.server.port}",
+                    server_address=f"[::]:{self.args.port}",
                     strategy=af_strategy,
-                    config={"num_rounds": 1},
-                    force_final_distributed_eval=False
+                    config=config,
+                    grpc_max_message_length=1536*1024*1024, # 1.5GB
         )
         
-        pca_strategy = FedPCAStrategy(self.method)
+        pca_strategy = FedPCAStrategy(self.args.strategy)
         start_server(
-                    server_address=f"[::]:{self.cfg.server.port}",
+                    server_address=f"[::]:{self.args.port}",
                     strategy=pca_strategy,
-                    config={"num_rounds": 1},
-                    force_final_distributed_eval=False
+                    config=config,
+                    grpc_max_message_length=1536*1024*1024, # 1.5GB
         )
-                
-                
+
+
+@dataclass
+class FedPCAClientArgs:
+    method: str
+
+
 class FedPCAClient(NumPyClient):
-    def __init__(self, method: str, variants_file: str, freq_path: str, pfile: str, output: str) -> None:
+    def __init__(self, method: str, cache: FileCache) -> None:
         super().__init__()
         self.method = method
-        self.variants_file = variants_file
-        self.freq_path = freq_path
-        self.pfile = pfile
-        self.output = output
+        self.cache = cache
 
     def fit(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[NDArrays, int, Dict[str, Scalar]]:
         self.run_client_pca()
-        if self.method == 'P-STACK':
+        if self.method == 'pstack':
             components, ids = self.load_pstack_component()
-            return [components, ids], len(ids), {} 
+            print(f'Size of components is {components.nbytes // 1e+6}MB, size of ids is {ids.nbytes // 1e+6}MB')
+            return [components], len(ids), {} 
 
-        elif self.method == 'P-COV':
+        elif self.method == 'pcov':
             components = self.load_pcov_component()
             return [components], components.shape[0], {}
         
     def evaluate(self, parameters: NDArrays, config: Dict[str, Scalar]) -> Tuple[float, int, Dict[str, Scalar]]:
-        allele_frequencies_file = os.path.join(
-            self.result_folder, self.ALL, self.train_foldname_template % fold + '.acount'
-        )
-
-        server_allele_file = os.path.join(
-            self.result_folder, self.ALL, self.train_foldname_template % fold + '.eigenvec.allele'
-        )
-
-        for part in self.parts:
-            pfile = os.path.join(self.source_folder, node, part % fold)
-            sscore_file = os.path.join(self.result_folder, node, part % fold + '_projections.csv.eigenvec')
+        
+        print(f'FedPCAClient evaluate, parameters len is {len(parameters)} and shape is {parameters[0].shape}')
+        self.create_plink_eigenvec_allele_file(parameters[0])
+        
+        for part in ['train', 'val', 'test']:
 
             run_plink(args_list=[
-                '--pfile', pfile,
-                '--extract', self.variant_ids_file,
-                '--read-freq', allele_frequencies_file,
-                '--score', server_allele_file, '2', '5',
-                '--score-col-nums', f'6-{6 + self.n_components - 1}',
-                '--out', sscore_file
+                '--pfile', str(self.cache.pfile_path(0, part)),
+                '--read-freq', str(self.cache.pfile_path(0, 'train').with_suffix('.acount')),
+                '--score', str(self.cache.pca_path(0, 'train', 'allele')), '2', '5',
+                # TODO: make number of PCs a parameter
+                '--score-col-nums', f'6-{6 + 20 - 1}',
+                '--out', str(self.cache.pfile_path(0, part))
             ])
 
         return super().evaluate(parameters, config)
@@ -156,13 +195,12 @@ class FedPCAClient(NumPyClient):
         Performs local PCA with plink
         """
 
-        n_samples = len(pandas.read_csv(self.pfile + '.psam', sep='\t', header=0))
+        n_samples = len(pandas.read_csv(self.cache.pfile_path(0, 'train').with_suffix('.psam'), sep='\t', header=0))
         run_plink(args_list=[
-            '--pfile', self.pfile,
-            '--extract', self.variants_file,
-            '--read-freq', self.freq_path,
-            '--pca', 'allele-wts', str(n_samples - 1),
-            '--out', self.output,
+            '--pfile', self.cache.pfile_path(0, 'train'),
+            '--read-freq', self.cache.pfile_path(0, 'train').with_suffix('.acount'),
+            '--pca', 'allele-wts', str(n_samples-1),
+            '--out', self.cache.pfile_path(0, 'train')
         ])
 
     def load_pstack_component(self) -> Tuple[numpy.ndarray, numpy.ndarray]:
@@ -184,32 +222,68 @@ class FedPCAClient(NumPyClient):
         Read plink results into NumPy arrays.
         """
         
-        evalues = pandas.read_csv(self.output + '.eigenval', sep='\t', header=None)
-        evectors = pandas.read_csv(self.output + '.eigenvec.allele', sep='\t', header=0)
+        evalues = pandas.read_csv(self.cache.pca_path(0, 'train', 'eigenval'), sep='\t', header=None)
+        evectors = pandas.read_csv(self.cache.pca_path(0, 'train', 'allele'), sep='\t', header=0)
 
-        return evectors[evectors.columns[5:]].to_numpy(), evalues[0].to_numpy(), evectors['ID'].to_numpy()
+        return evectors[evectors.columns[5:]].to_numpy(), evalues[0].to_numpy(), evectors['ID'].to_numpy(numpy.dtype('U32'))
+    
+    
+    def create_plink_eigenvec_allele_file(self, evectors: numpy.ndarray):
+        # Take the first 5 columns from one of the nodes to mimic combined plink .eigenvec.allele file
+
+        client_allele = pandas.read_csv(self.cache.pca_path(0, 'train', 'allele') , sep='\t', header=0)
+        server_allele = client_allele[client_allele.columns[0:5]]
+
+        for n in range(client_allele.shape[1] - 6):
+            '''
+            FIXME: Temporary solution
+
+            Motivation
+            ----------
+
+            Principal components obtained from `svds` are normalized, i.e. have the norm the equals 1.
+            Due to the normalization, resulting projection have small values for sample coordinates
+            in the principal components space. Our classifier cannot learn from such values, since
+            they are too small and we do not have a data normalization step.
+
+            Normalization
+            -------------
+
+            Plink principal components are normalized in a different way. We use one of the client files
+            to compute principal components norm and then renormalize the federated principal components
+            in the same way to mimic plink PCA scale.
+
+            This should be considered as a temporary solution. In the future data normalization may be
+            added into the data loading stage, it can be implemented for our federated case as well.
+            '''
+
+            component_name = f'PC{n + 1}'
+            current_norm = numpy.linalg.norm(evectors[n])
+            plink_norm = numpy.linalg.norm(client_allele.iloc[:, n + 5])
+            server_allele.loc[:, component_name] = evectors[n] * plink_norm / current_norm
+
+        print(f'Writing aggregated and normalized allele file with {server_allele.columns} cols')
+        server_allele.to_csv(str(self.cache.pca_path(0, 'train', 'allele')) + '.aggregated', sep='\t', header=True, index=False)
+    
     
 class FedPCANode:
-    def __init__(self, NodeArgs: NodeArgs) -> None:
-        self.client = FedPCAClient()
+    def __init__(self, args: FedPCAClientArgs, node_args: NodeArgs) -> None:
+        self.args = args
+        self.node_args = node_args
         
-    def fit_transform(self):
-        for i in range(20):
-            try:
-                print(f'starting numpy client with server {self.client.server}')
-                flwr.client.start_numpy_client(f'{self.client.server}', self.client)
-                return True
-            except RpcError as re:
-                # probably server has not started yet
-                print(re)
-                time.sleep(30)
-                continue
-            except Exception as e:
-                print(e)
-                self.logger.error(e)
-                raise e
-        return False  
-    
+    def fit_transform(self, cache: FileCache):
+        
+        self.allele_freq_client = AlleleFreqClient(str(cache.pfile_path(0, 'train')), 
+                                                   str(cache.pfile_path(0, 'train').with_suffix('.aggregated')))
+        
+        print(f'Running allele frequency client on node')
+        run_node(self.node_args, self.allele_freq_client)
+
+        self.fed_pca_client = FedPCAClient(self.args.method, cache)
+
+        print(f'Running federated PCA on node')
+        run_node(self.node_args, self.fed_pca_client)
+        
 
 class FederatedPCASim:
     """

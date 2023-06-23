@@ -1,0 +1,6 @@
+_target_: flan.NodeArgs
+client: 
+  host: localhost
+  port: 7501
+connect_iters: 20
+connect_timeout: 30

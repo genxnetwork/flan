@@ -13,8 +13,11 @@ def run_plink(args_list: List[str], args_dict: dict = None):
         RuntimeError: If plink returned a error
     """
     lst = [[k, v] for k, v in args_dict.items()] if args_dict is not None else []
+    plink_args = ['plink2'] + args_list + [x for xs in lst for x in xs]
+    print(f'Plink args: {plink_args}')
     plink = subprocess.run(['plink2'] + args_list + [x for xs in lst for x in xs], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if plink.returncode != 0:
+        print(plink.stdout.decode('utf-8'))
         raise RuntimeError(plink.stderr.decode('utf-8'))
     else:
         print(plink.stdout.decode('utf-8'))

@@ -1,0 +1,4 @@
+_target_: flan.PrunerArgs
+window: 1000
+step: 50
+r2_threshold: 0.018

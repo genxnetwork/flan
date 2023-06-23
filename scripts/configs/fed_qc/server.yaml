@@ -1,0 +1,6 @@
+_target_: flan.ServerArgs
+host: localhost
+port: 7501
+strategy: intersect
+epochs_in_round: 1
+strategy_args: {}

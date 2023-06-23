@@ -26,6 +26,5 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-# my_package_cli = 'my_package.console:run'
-flan = "scripts:global_ancestry"
+flan = "scripts:flan"
 plink2 = "scripts:plink2"

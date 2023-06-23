@@ -1,0 +1,13 @@
+_target_: flan.NodeAncestryArgs
+defaults:
+  - cache: node1
+  - qc: tg
+  - source: node1_50
+  - prune: default
+  - fed_qc: tg
+  - fed_pca: pstack
+  - node: localhost
+  - _self_
+
+name: node1
+start_stage: source

@@ -16,9 +16,8 @@ class QC:
         self.qc_config = qc_config
     
     def fit_transform(self, cache: FileCache) -> None:
-        run_plink(args_list=['--make-pgen'],
-                  args_dict={**{'--pfile': cache.pfile_path(), # Merging dicts here
-                                '--out': cache.pfile_path(),
+        run_plink(args_list=['--pfile', str(cache.pfile_path()), 'vzs', '--make-pgen'],
+                  args_dict={**{'--out': str(cache.pfile_path()), # Merging dicts here
                                 '--set-missing-var-ids': '@:#'},
                              **self.qc_config})
     
@@ -28,4 +27,3 @@ class QC:
                   args_dict={**{'--out': str(dest_path),
                                 '--set-missing-var-ids': '@:#'},
                              **self.qc_config})
-    

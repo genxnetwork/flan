@@ -14,139 +14,76 @@ import plotly.graph_objects as go
 
 from .utils.cache import FileCache, CacheArgs
 from .pca import PCA, PCAArgs
-from .preprocess import QC, TGDownloader, SampleSplitter, SplitArgs, SourceArgs
-from .preprocess.qc import QCArgs
+from .preprocess import (
+    QC, QCArgs, FedVariantQCNode, 
+    FoldSplitter, SplitArgs, 
+    SourceArgs, PgenCopy, PhenotypeExtractor,
+    FedVariantQCArgs,
+    Pruner, PrunerArgs
+)
 from .nn.models import MLPClassifier, BaseNet, ModelArgs, OptimizerArgs, SchedulerArgs
 from .nn.lightning import X, Y, DataModule
 from .nn.loader import LocalDataLoader
 from .glbl import TrainArgs
+from .fl_engine.utils import NodeArgs
+from .pca.federated_plink import FedPCANode, FedPCAClientArgs
 
 
 logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 
 
 @dataclass
-class ClientArgs:
-    host: str
-    port: int
-    
-@dataclass 
-class ServerArgs:
-    host: str
-    port: int
-    strategy: str
-    epochs_in_round: int
-
-
-@dataclass
-class NodeArgs:
+class NodeAncestryArgs:
+    name: str
+    start_stage: str
+    source: SourceArgs
     cache: CacheArgs
     qc: QCArgs
-    split: SplitArgs
-    pca: PCAArgs
-    train: TrainArgs
-    client: ClientArgs 
-    model: ModelArgs = ModelArgs()
-    optimizer: OptimizerArgs = OptimizerArgs()
-    scheduler: SchedulerArgs = SchedulerArgs()
+    prune: PrunerArgs
+    fed_qc: FedVariantQCArgs
+    fed_pca: FedPCAClientArgs
+    node: NodeArgs
 
 
 class NodeAncestry:
-    def __init__(self, args: NodeArgs) -> None:
+    def __init__(self, args: NodeAncestryArgs) -> None:
         if args.cache.path is None or args.cache.path == '':
-            args.cache.path = os.path.expanduser('~/.cache/deep_ancestry')
-        
+            args.cache.path = os.path.expanduser(f'~/.cache/flan/node_{args.name}')
+
+        if args.start_stage is None or args.start_stage == '':
+            args.start_stage = 'source'
+            
         self.args = args
+        args.cache.num_folds = 1
+        
         self.cache = FileCache(args.cache)
-        self.variant_qc = QC(args.qc.variant)
-        self.sample_qc = QC(args.qc.sample)
-        self.sample_splitter = SampleSplitter(args.split)
-        self.pca = PCA(args.pca)
-        self.data_loader = LocalDataLoader()
+        self.source = PgenCopy(args.source)
+        self.phenotype_extractor = PhenotypeExtractor()
+        self.local_variant_qc = QC(args.qc.variant)
+        self.federated_variant_qc = FedVariantQCNode(args.fed_qc, args.node)
+        self.local_splitter = FoldSplitter(SplitArgs(num_folds=1))
+        self.federated_pca = FedPCANode(args.fed_pca, args.node)
+        self.pruner = Pruner(args.prune)
+        self.stages = [
+            ('source', self.source),
+            ('phenotype', self.phenotype_extractor),
+            ('local_variant_qc', self.local_variant_qc),
+            ('pruner', self.pruner),
+            ('variant_qc', self.federated_variant_qc),
+            ('local_splitter', self.local_splitter),
+            ('pca', self.federated_pca)
+        ]
+        
+        if args.start_stage not in [stage for stage, _ in self.stages]:
+            raise ValueError(f'invalid start stage: {args.start_stage}')
+        
+        stage_start_idx = [i for i, (stage, _) in enumerate(self.stages) if stage == args.start_stage][0]
+        self.stages = self.stages[stage_start_idx:]
+
         
     def prepare(self) -> None:
-
-        print(f'Running variant QC with {self.variant_qc.qc_config} config')
-        self.variant_qc.fit_transform(self.cache)
         
-        print(f'Running sample QC with {self.sample_qc.qc_config} config')
-        self.sample_qc.fit_transform(self.cache)
-        
-        print(f'Splitting into train, val and test datasets')
-        self.sample_splitter.fit_transform(self.cache)
-        
-        print(f'Running PCA with {self.pca.args.n_components} components')
-        self.pca.fit(self.cache)
-
-        self.pca.transform(self.cache)
-        print(f'Global ancestry inference data preparation finished')
-        
-    def _plot_target_distribution(self, y: Y, fold: int):
-        values, counts = numpy.unique(y.train, return_counts=True)
-        _, val_counts = numpy.unique(y.val, return_counts=True)
-        _, test_counts = numpy.unique(y.test, return_counts=True)
-        assert len(counts) == len(val_counts)
-        assert len(counts) == len(test_counts)
-        
-        fig = go.Figure(data=[
-            go.Bar(name='Train', x=values, y=counts/counts.sum()),
-            go.Bar(name='Val', x=values, y=val_counts/val_counts.sum()),
-            go.Bar(name='Test', x=values, y=test_counts/test_counts.sum())
-        ])
-        # Change the bar mode
-        fig.update_layout(barmode='group')
-        with open(self.cache.target_plot_path(fold, 'train'), 'wb') as file:
-            file.write(fig.to_image('png'))
-    
-    def _load_data(self, fold: int) -> Tuple[X, Y]:
-        
-        x, y = self.data_loader.load(self.cache, fold)
-        
-        train_stds, val_stds, test_stds = x.train.std(axis=0), x.val.std(axis=0), x.test.std(axis=0)
-        for part, stds in zip(['train', 'val', 'test'], [train_stds, val_stds, test_stds]):
-            print(f'{part} stds: {numpy.array2string(stds, precision=3, floatmode="fixed")}')
-
-        x.val = x.val * (train_stds / val_stds)
-        x.test = x.test * (train_stds / test_stds)
-        for part, matrix in zip(['train', 'val', 'test'], [x.train, x.val, x.test]):
-            print(f'{part} normalized stds: {numpy.array2string(matrix.std(axis=0), precision=3, floatmode="fixed")}')
-
-        self._plot_target_distribution(y, fold)
-        return x, y
-    
-    def _create_model(self, nclass: int, nfeat: int) -> BaseNet:
-        return MLPClassifier(nclass=nclass, nfeat=nfeat,
-                             optim_params=self.args.optimizer,
-                             scheduler_params=self.args.scheduler,
-                             loss=cross_entropy)
-    
-    def _eval(self) -> None:
-        pass
-    
-    def _start_mlflow_run(self, fold: int):
-        mlflow.set_experiment('global_ancestry')
-        universal_tags = {
-            'model': 'mlp_classifier',
-            'phenotype': 'ancestry',
-        }
-        study_tags = {
-            'fold': fold
-        }
-        self.run = mlflow.start_run(tags=universal_tags | study_tags)
-    
-    
-    def fit(self) -> None:
-        for fold in trange(self.cache.num_folds):
-            self._start_mlflow_run(fold)
-            x, y = self._load_data(fold)
-            num_classes = len(numpy.unique(y.train))
-            data_module = DataModule(x, y, self.args.train.batch_size)
-            model = self._create_model(num_classes, x.train.shape[1])
-            trainer = Trainer(max_epochs=self.args.scheduler.epochs_in_round, log_every_n_steps=20)
-            trainer.fit(model, datamodule=data_module)
-            self._eval(trainer, model)  
-            mlflow.end_run()      
-    
-    def predict(self) -> None:
-        pass
-    
+        for stage, node in self.stages:        
+            print(f'running stage {stage} from {self.stages}')
+            node.fit_transform(self.cache)
+            
